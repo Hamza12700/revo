@@ -44,6 +44,8 @@ pub fn register_stdlib(vm: *revo.VM) !void {
     try @import("string.zig").register(vm);
     try @import("table.zig").register(vm);
     try @import("net.zig").register(vm);
+    try @import("json.zig").register(vm);
+    try @import("time.zig").register(vm);
     try @import("meta.zig").comparison_mt.register(vm);
     try @import("tuple.zig").register(vm);
     try @import("iter.zig").register(vm);
@@ -203,8 +205,8 @@ pub fn resultTag(vm: *VM, comptime tag: ResultTag) !mem.AtomID {
     };
 }
 
-pub fn boolData(value: bool) Data {
-    return Data.new.num(@as(u8, if (value) 1 else 0));
+pub inline fn boolData(value: bool) Data {
+    return if (value) revo.core_atoms.true.data() else revo.core_atoms.false.data();
 }
 
 pub fn tupleTag(value: Data, vm: *VM) ?mem.AtomID {
@@ -1142,3 +1144,11 @@ test "array flatten" {
     try testing.top_number("{{1, 2}, {3, 4}}:flatten():sum()", 10);
     try testing.top_number("{{1}, {2, 3}, {4}}:flatten():sum()", 10);
 }
+
+test "stdlib json time and string modules are exposed" {
+    try testing.top_string("json.encode((\"a\", \"b\", \"c\")):unwrap()", "[\"a\",\"b\",\"c\"]");
+    try testing.top_number("json.decode(\"{\\\"a\\\":1}\"):unwrap().a", 1);
+    try testing.top_true("time.now() > 0");
+    try testing.top_number("len(string.split(\"a,b\", \",\"))", 2);
+}
+

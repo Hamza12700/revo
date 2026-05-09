@@ -56,6 +56,13 @@ test "len" {
     try t.top_number("len(\"hi\")", 2);
 }
 
+test "stdlib json time and string modules are exposed" {
+    try t.top_string("json.encode((\"a\", \"b\", \"c\")):unwrap()", "[\"a\",\"b\",\"c\"]");
+    try t.top_number("json.decode(\"{\\\"a\\\":1}\"):unwrap().a", 1);
+    try t.top_true("time.now() > 0");
+    try t.top_number("len(string.split(\"a,b\", \",\"))", 2);
+}
+
 // talks too much
 // test "weird metatable edge case" {
 //     try t.top_nil(

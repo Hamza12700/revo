@@ -45,6 +45,27 @@ pub fn register(vm: *VM) !void {
         .{ .name = "string_of", .f = root.define(&.{.any}, string_of) },
         .{ .name = "string_join", .f = root.define(&.{ .table, .string }, join) },
     });
+
+    // TODO: make a function that registers both mt and normal t
+    try root.registerTableFunctions(vm, "string", &[_]root.FuncDef{
+        .{ .name = "len", .f = root.define(&.{.string}, len_f) },
+        .{ .name = "upper", .f = root.define(&.{.string}, upper_f) },
+        .{ .name = "lower", .f = root.define(&.{.string}, lower_f) },
+        .{ .name = "sub", .f = root.define(&.{ .string, .number, .number }, sub_f) },
+        .{ .name = "find", .f = root.define(&.{ .string, .string }, find_f) },
+        .{ .name = "replace", .f = root.define(&.{ .string, .string, .string }, replace_f) },
+        .{ .name = "split", .f = root.define(&.{ .string, .string }, split_f) },
+        .{ .name = "trim", .f = root.define(&.{.string}, trim_f) },
+        .{ .name = "starts_with", .f = root.define(&.{ .string, .string }, starts_with_f) },
+        .{ .name = "ends_with", .f = root.define(&.{ .string, .string }, ends_with_f) },
+        .{ .name = "reverse", .f = root.define(&.{.string}, reverse_f) },
+        .{ .name = "with", .f = root.define(&.{ .string, .number, .string }, set) },
+        .{ .name = "table", .f = root.define(&.{.string}, to_table) },
+        .{ .name = "ascii", .f = root.define(&.{.string}, ascii_f) },
+        .{ .name = "contains", .f = root.define(&.{ .string, .string }, contains) },
+        .{ .name = "index_of", .f = root.define(&.{ .string, .string }, index_of) },
+        .{ .name = "join", .f = root.define(&.{ .table, .string }, join) },
+    });
 }
 
 //

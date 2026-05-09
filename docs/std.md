@@ -1,115 +1,52 @@
 ---
-title: 'the standard library'
+title: 'core docs'
 ---
 
-# revo's std lib
+<div style="display:flex; gap:1rem; align-items:flex-start; flex-wrap:wrap;">
+  <pre class="ascii small">
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⡶⢦⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡔⢫⣮⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⡰⠑⠌⠄⡀⡆⠀⠀⠀⠀⠀⠀⠀⠀⢠⡞⣕⣱⣛⡻⠻⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⣧⠐⠃⡀⢃⡙⡀⠀⠀⠀⠀⠀⠀⡰⣫⡞⢩⡞⠁⡀⠀⣟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⢹⣦⠁⡐⠠⠹⣄⠀⠀⠀⠀⠀⡔⢵⡟⠠⠋⡄⠀⠀⡘⠸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⡀⡇⢢⠀⠘⣇⠀⠀⠀⣰⡫⣻⠀⠀⡸⠀⠀⢘⡒⢼⠠⠒⠚⠻⡍⠋⠛⠒⣶⢤⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⡿⠡⡱⡙⢄⠌⢆⠀⢠⠟⡏⢸⡆⠀⠇⠀⣠⣪⠖⣿⠀⠀⠀⡆⠀⠀⠀⠀⠀⠅⢀⡙⢋⠙⠲⡦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⡆⠃⠼⡀⡄⣞⠄⣼⣾⣯⠢⣏⣰⠀⡰⣻⠅⣸⡿⠀⠀⡰⠀⣴⠁⢠⠂⡘⠐⠀⠀⠀⠀⠀⠀⠈⠲⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡆⠄⡖⠅⢳⠎⢹⣿⣿⡾⡢⢻⣾⡸⢠⠇⠤⢫⣧⣇⡖⣷⡺⡫⡆⣡⠎⢀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠶⣄⡀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢾⢦⠃⠀⢃⣾⡛⢿⢻⠇⡨⣻⣷⣏⣠⠊⠍⡼⣿⡇⡘⢀⡕⡱⠀⡠⠂⣈⠔⢁⠔⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⣢⡀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡶⢀⠄⠔⠀⠘⢻⣧⡟⠇⠘⠳⢨⡟⠁⠠⠊⣸⣿⡏⣰⡧⠛⠀⣤⠏⣠⠞⠁⠔⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⢣⡄⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⢏⡐⠋⡰⢁⠞⡀⣼⠺⣧⡎⡔⠀⠈⠉⠀⠀⣰⡿⣿⣷⣿⣧⡾⢾⢛⣍⠌⣠⣤⡠⠄⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠱⡄⠀
+⠀⠀⠀⠀⠀⢀⣠⣾⢫⢯⣿⢴⣽⣷⢆⣼⠟⡗⡀⡠⠟⠀⢀⠄⠀⠀⠀⣹⣾⣿⢏⣾⣩⣷⣟⣋⡞⠖⠋⠀⠀⠀⠂⠀⠐⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢱⡀
+⠀⠀⠀⠀⢠⡞⣣⣿⢣⣫⡿⣽⠎⢢⠿⢃⠎⠈⡁⠊⠀⡨⠃⠀⠠⢀⡨⠛⣩⣷⣷⠿⣫⡱⠟⠃⠀⠀⣀⡀⠄⠠⠤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠓
+⠀⠀⠀⢰⡏⣰⢃⠃⣼⡿⣿⠋⠀⠀⠀⠁⠀⠀⠀⢀⠜⠀⠠⠖⠂⠁⠀⠀⠘⣹⣿⡉⠋⣡⠔⠀⠀⠀⡀⠀⠀⠒⠐⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣸⢴⢳⢹⣧⡟⠁⠃⢀⣔⣶⣦⡤⠀⠈⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⢀⣳⣿⠛⠒⠓⢀⠀⡀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⢠⡿⢸⣿⡖⣇⣇⠀⢴⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢯⣾⠟⠃⠀⠔⠁⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⣾⢁⣟⣷⣇⠻⠉⢇⠘⠯⣿⣿⡿⠛⠀⠀⠀⠀⣀⠀⠀⠀⠀⠀⢀⠼⣗⡊⠉⠉⣄⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⢸⡿⢟⣟⠫⢏⡆⠀⠨⠟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⡞⠶⠶⠟⠛⠄⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⢸⣷⣹⠐⠁⠀⠀⠀⠀⠀⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠞⠀⠌⠐⠑⠦⠀⠀⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠈⢾⣿⣿⣴⣤⣧⡶⣦⣤⠐⠂⠤⠄⠀⠄⠀⠀⠀⠀⠀⠀⢀⡋⠉⠉⢤⣌⣈⠢⠀⠠⠤⢤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠘⣿⣿⣿⣿⣾⣷⣯⢧⠼⡢⠐⠂⠀⠀⠀⠀⠀⠀⠀⢠⠀⠀⠀⠰⠦⣿⠁⠒⠗⣤⡀⠀⢢⡀⠀⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠂⠀⠀⠀⠀⠀⠀
+⠀⠀⠈⣿⣿⣆⣻⡿⣹⡀⣦⡚⢦⠁⠁⠀⠀⢠⠀⠐⠀⢐⠀⠀⠈⠂⢄⠙⢧⡍⠑⠠⡉⣷⣤⡠⢭⣆⠱⣕⡖⠂⠀⠀⠀⠀⠀⣤⣿⣷⡯⢍⡓⣤⠀⠀⠀⠀
+⠀⠀⠀⡘⠫⠝⠿⣿⣜⣧⣰⢎⢄⢡⠀⠐⠂⠀⠀⠀⠄⠠⢀⠦⣀⡐⠳⣦⣈⡌⣗⣄⣿⣮⡿⣿⡷⢿⢷⠕⡤⢧⡀⠀⠀⠀⣶⣿⣯⣈⡇⢷⠨⣢⡁⣦⡀⠀
+⠀⠀⠈⠀⠀⠀⠀⠀⠉⣧⣧⢥⣡⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢩⠏⠻⣮⡹⠦⣵⣼⣿⣿⣿⢿⡜⢾⣜⣦⣿⡜⢿⠢⢵⣤⣷⣿⣿⣏⠻⠿⠦⣄⣟⠁⠀⠈⢁
+⠀⠀⠀⠀⠀⠰⠀⠀⠘⠛⠛⠚⠛⣳⣶⣶⣄⠀⠢⡀⠠⠀⢠⠀⢀⢰⣿⣌⣧⣿⡿⠿⠟⠉⠖⢳⠈⠄⡀⢩⢿⣆⣻⣳⣿⣿⣿⣿⣿⢿⡀⣀⣸⡇⢀⠠⠖⠁
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⣿⣿⣷⣿⣦⣶⣿⣤⣾⣾⣿⣿⠟⢁⠀⠀⠀⣰⡆⢀⠰⡏⢱⣾⡶⠿⠛⠋⠁⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠛⠛⠛⠟⠿⠿⠿⠿⠿⠿⠿⠿⠟⠒⠻⣀⡶⣳⡿⡇⢀⣿⣣⠟⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠂⠤⠏⠀⠄⠒⠋⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  </pre>
+  <div style="flex:1; min-width:250px;">
+
+# revo's core library
 > auto-generated from source
+
+please note that the docgen script, used to generate this, is not yet done and information may not align with reality
+
+  </div>
+
+</div>
 # core
-
-### - `fmt(format: string, args: any...) -> string`
-format string with %v, %d, %? specifiers
-%v: display value, %d: as number, %?: debug repr
-
-```ruby
-fmt("hello %v", "world")
-fmt("val: %v, num: %d", "x", 42)
-```
-
-### - `table:len() -> number`
-returns length of table array part
-
-### - `inspect(any) -> any`
-prints one value and returns it back
-
-### - `get_metatable(arg0: any)`
-
-### - `set_metatable(tbl: table, meta: table) -> table`
-returns table with the mt set
-
-```ruby
-t = {}
-mt = {__len = fn() 42}
-set_metatable(t, mt)
-```
-
-### - `typeof(arg0: any) -> string`
-returns type of arg0 as string
-possible values: nil, number, string, atom, function, table, tuple
-
-### - `table:tostring() -> string`
-converts table to display string
-
-### - `tonumber(arg0: any) -> NativeResult`
-converts value to number
-accepts number (passthrough) or string (parsed)
-errors on other types
-
-### - `assert(arg0: any) -> NativeResult`
-asserts value is truthy
-errors with "assertion failed" if value is false or nil
-
-### - `set_debug(arg0: table)`
-
-### - `@range(start: number, step: number, stop: number) -> tuple`
-creates a range tuple (start, step, stop)
-
-### - `@range_from(start: number, step: number) -> tuple`
-creates a range tuple (start, step) without stop
-
-### - `@struct_new(arg0: table, arg1: table)`
-
-### - `@try(result: tuple) -> any`
-unwraps result tuple, panics if not :ok
-
-### - `@eval(arg0: string)`
-
-### - `chan(capacity?: number) -> tuple`
-creates a new channel with optional buffer size
-
-```ruby
-chan()        # unbuffered
-chan(5)       # buffer of 5
-```
-
-### - `send(chan: tuple, value: any) -> atom`
-sends value to channel
-
-### - `recv(chan: tuple) -> any`
-receives value from channel, parks if empty
-
-### - `sleep(ms: number) -> parked`
-sleeps current fiber for given milliseconds
-parks fiber instead of blocking
-
-### - `print(args: any...) -> atom`
-prints values to stdout with space separator
-
-```ruby
-print("hello", 42, "world")
-```
-
-### - `panic(args: any...) -> error`
-panics with given message
-
-```ruby
-panic("something went wrong")
-```
-
-### - `cload(path: string) -> table`
-ret: all loaded functions
-you should use import() instead. likely going to remove this
-loads a C extension lib and registers its functions as globals
 
 ---
 # string
-
-### - `string_of(code: number | tuple) -> string`
-creates string from ASCII code(s)
-string_of(97) => "a"
-string_of({97, 98}) => "ab"
-
-### - `string.join(table: table, sep: string) -> string`
-joins table elements into string with separator
 
 ### - `table:len() -> number`
 returns length of table array part
@@ -163,6 +100,17 @@ checks if table contains value
 ### - `table:index_of(value) -> number | nil`
 ret 0-based index of value or nil if not found
 
+### - `string.join(table: table, sep: string) -> string`
+joins table elements into string with separator
+
+### - `string_of(code: number | tuple) -> string`
+creates string from ASCII code(s)
+string_of(97) => "a"
+string_of({97, 98}) => "ab"
+
+### - `string.join(table: table, sep: string) -> string`
+joins table elements into string with separator
+
 ### - `string[idx: number] -> string`
 returns character at index as single-char string
 
@@ -177,6 +125,13 @@ returns string as-is (identity for tostring)
 
 ---
 # table
+
+### - `rawget(table: table, key: any) -> any`
+gets value without metamethods
+returns :undef if key missing
+
+### - `rawset(table: table, key: any, value: any) -> table`
+sets value without metamethods
 
 ### - `table:insert(pos: number, value: any) -> atom`
 inserts value at position, shifting elements right
@@ -247,6 +202,48 @@ converts table to display string
 
 ### - `table:__debug() -> string`
 converts table to debug string
+
+---
+# file
+
+### - `read(arg0: any)`
+
+### - `write(arg0: any, arg1: any)`
+
+### - `stat(arg0: any)`
+
+### - `close(arg0: any)`
+
+### - `readdir(arg0: any)`
+
+---
+# fs
+
+### - `open(arg0: string)`
+
+---
+# net
+
+### - `net:connect(host: string, port: number) -> socket`
+connects to a remote host and port, returns a socket handle
+
+### - `net:listen(port: number [, backlog: number]) -> socket`
+listens for incoming connections on the given port, returns server socket
+
+---
+# socket
+
+### - `socket:accept() -> socket`
+accepts an incoming client connection on a server socket
+
+### - `socket:send(data: string) -> number`
+sends data over the socket, returns number of bytes sent
+
+### - `socket:recv([max_bytes: number]) -> string`
+receives data from the socket, returns data as string
+
+### - `socket:close() -> atom`
+closes the socket
 
 ---
 # iter
