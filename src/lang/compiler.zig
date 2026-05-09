@@ -1643,7 +1643,7 @@ pub const Compiler = struct {
                 try self.emit(.load_global, try self.vm.internAtom("type"));
                 try self.emitStorageLoad(subject);
                 try self.emit(.call, 1);
-                try self.emitConst(try self.vm.ownDataString("tuple"));
+                try self.emitConst(Data.new.atom(try self.vm.internAtom("tuple")));
                 try self.emit(.eq, 0);
                 try fail_jumps.append(self.alloc, try self.emitJump(.jump_if_false));
 
