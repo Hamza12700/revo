@@ -75,9 +75,9 @@ pub fn map_fn(args: []const Data, vm: *VM) !NativeResult {
         },
         .table => {
             const table_id = args[0].table;
-            const table = try vm.tables.get(table_id);
             const result_table_id = try vm.tables.create();
             const result_table = try vm.tables.get(result_table_id);
+            const table = try vm.tables.get(table_id);
 
             for (table.array.items) |item| {
                 const fn_result = vm.callFunction(fn_data, &[_]Data{item}) catch |err| {
@@ -152,9 +152,9 @@ pub fn filter_fn(args: []const Data, vm: *VM) !NativeResult {
         },
         .table => {
             const table_id = args[0].table;
-            const table = try vm.tables.get(table_id);
             const result_table_id = try vm.tables.create();
             const result_table = try vm.tables.get(result_table_id);
+            const table = try vm.tables.get(table_id);
 
             for (table.array.items) |item| {
                 const fn_result = vm.callFunction(fn_data, &[_]Data{item}) catch |err| {
