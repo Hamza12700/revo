@@ -2068,6 +2068,21 @@ test "comp w bool ops" {
     , "true");
 }
 
+test "comp runtime failures report the comp span" {
+    try t.expectCompileFailure(
+        \\ comp (1 / 0)
+    , .ParseError, 1, 1, "division by zero!");
+}
+
+test "proc generated comp failures report the macro call site" {
+    try t.expectCompileFailure(
+        \\ proc bad_comp!(iter) do
+        \\   {(:comp_block, (:binary, :div, 1, 0), :false)}
+        \\ end
+        \\ bad_comp!()
+    , .ParseError, 4, 1, "division by zero!");
+}
+
 test "fn name(params) defines named function" {
     try t.top_number(
         \\ fn add(a, b) a + b

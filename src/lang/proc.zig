@@ -14,6 +14,7 @@ pub const ExpandError = error{
     InvalidProcReturn,
     ProcCompileFailed,
     ProcEvalFailed,
+    RecursiveProcMacro,
     UnsupportedProcValue,
 } || std.mem.Allocator.Error;
 
@@ -39,20 +40,42 @@ const ProcDef = struct {
 const ProcEnv = struct {
     allocator: std.mem.Allocator,
     map: std.StringHashMap(ProcDef),
+    active: std.ArrayList([]const u8),
 
     fn init(allocator: std.mem.Allocator) ProcEnv {
-        return .{ .allocator = allocator, .map = std.StringHashMap(ProcDef).init(allocator) };
+        return .{
+            .allocator = allocator,
+            .map = std.StringHashMap(ProcDef).init(allocator),
+            .active = std.ArrayList([]const u8).empty,
+        };
     }
 
     fn deinit(self: *ProcEnv) void {
         self.map.deinit();
+        self.active.deinit(self.allocator);
     }
 
     fn clone(self: *const ProcEnv) !ProcEnv {
         var cloned = ProcEnv.init(self.allocator);
         var it = self.map.iterator();
         while (it.next()) |entry| try cloned.map.put(entry.key_ptr.*, entry.value_ptr.*);
+        try cloned.active.appendSlice(self.allocator, self.active.items);
         return cloned;
+    }
+
+    fn isActive(self: *const ProcEnv, name: []const u8) bool {
+        for (self.active.items) |active_name| {
+            if (std.mem.eql(u8, active_name, name)) return true;
+        }
+        return false;
+    }
+
+    fn pushActive(self: *ProcEnv, name: []const u8) !void {
+        try self.active.append(self.allocator, name);
+    }
+
+    fn popActive(self: *ProcEnv) void {
+        _ = self.active.pop();
     }
 };
 
@@ -341,6 +364,10 @@ fn evalProcMacro(
     args: []const *Node,
     env: *ProcEnv,
 ) ExpandError!*Node {
+    if (env.isActive(def.name)) return error.RecursiveProcMacro;
+    try env.pushActive(def.name);
+    defer env.popActive();
+
     const allocator = env.allocator;
 
     var serialized = try std.ArrayList(*Node).initCapacity(allocator, args.len);
@@ -439,6 +466,7 @@ fn reportProcExpandError(
     const message = switch (err) {
         error.UnsupportedProcValue => "unsupported proc value while encoding/decoding AST",
         error.InvalidProcReturn => "invalid proc return AST encoding",
+        error.RecursiveProcMacro => "recursive proc macro expansion",
         else => @errorName(err),
     };
     renderProcFailure(allocator, proc_name, "expand", span, message);
@@ -1150,4 +1178,29 @@ test "proc iter next_of unwraps payload values" {
         \\ end
         \\ sum3!(10, 20, 12)
     , 42);
+}
+
+test "proc macro can use comp inside body" {
+    try testing.top_number(
+        \\ proc add_comp!(iter) do
+        \\   const n = comp (1 + 1)
+        \\   {(:number, n + iter:next_of(:number))}
+        \\ end
+        \\ add_comp!(40)
+    , 42);
+}
+
+test "recursive proc macro is rejected for now" {
+    var vm = try revo.VM.init(testing.runtime());
+    defer vm.deinit();
+
+    try std.testing.expectError(error.RecursiveProcMacro, lang.build(&vm, .{
+        .text =
+        \\ proc loop!(iter) do
+        \\   comp (1 + 1)
+        \\   {(:call, (:ident, "loop!"), {}, :false)}
+        \\ end
+        \\ loop!()
+        ,
+    }, .{}));
 }
