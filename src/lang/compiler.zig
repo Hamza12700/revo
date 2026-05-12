@@ -514,6 +514,53 @@ pub const Compiler = struct {
         , 402);
     }
 
+    test "nested closure captures grandparent local" {
+        try testing.top_number(
+            \\ fn outer() do
+            \\   const x = 41
+            \\   fn middle() do
+            \\     fn inner() do
+            \\       x + 1
+            \\     end
+            \\     inner()
+            \\   end
+            \\   middle()
+            \\ end
+            \\ outer()
+        , 42);
+    }
+
+    test "recursive closure captures outer local" {
+        try testing.top_number(
+            \\ fn make(n) do
+            \\   const seed = n
+            \\   fn step(m) if m <= 0 seed else step(m - 1) + seed
+            \\   step(2)
+            \\ end
+            \\ make(5)
+        , 15);
+    }
+
+    test "closures share mutable upvalue cell" {
+        try testing.top_number(
+            \\ fn make() do
+            \\   let x = 0
+            \\   fn inc() do
+            \\     x = x + 1
+            \\     x
+            \\   end
+            \\   fn read() do
+            \\     x
+            \\   end
+            \\   (inc, read)
+            \\ end
+            \\ const inc, read = make()
+            \\ inc()
+            \\ inc()
+            \\ read()
+        , 2);
+    }
+
     fn compilePipe(self: *Compiler, left: *const Node, right: *const Node) InternalLowerError!void {
         switch (right.expr) {
             .ident, .field => {
@@ -930,6 +977,7 @@ pub const Compiler = struct {
             return try self.addUpvalue(fn_index, .{ .is_local = true, .index = local.slot, .mutable = local.mutable });
         }
         if (try self.resolveUpvalueRecursive(enc, name)) |slot| {
+            std.debug.assert(slot < self.functions.items[enc].upvalues.items.len);
             const spec = self.functions.items[enc].upvalues.items[slot];
             return try self.addUpvalue(fn_index, .{ .is_local = false, .index = @intCast(slot), .mutable = spec.mutable });
         }
