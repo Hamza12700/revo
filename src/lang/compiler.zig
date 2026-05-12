@@ -163,6 +163,7 @@ pub const Compiler = struct {
     break_jumps: std.ArrayList(usize),
     /// stack of result registers for inline loops (where break stores its value)
     loop_result_regs: std.ArrayList(usize),
+    test_suite_names: std.ArrayList([]const u8),
     /// depth of inline loops for validating break
     in_loop_depth: usize = 0,
     failure: ?LowerFailure = null,
@@ -183,6 +184,7 @@ pub const Compiler = struct {
             .temp_names = try std.ArrayList([]u8).initCapacity(vm.runtime.alloc, 16),
             .break_jumps = try std.ArrayList(usize).initCapacity(vm.runtime.alloc, 16),
             .loop_result_regs = try std.ArrayList(usize).initCapacity(vm.runtime.alloc, 8),
+            .test_suite_names = try std.ArrayList([]const u8).initCapacity(vm.runtime.alloc, 4),
         };
     }
 
@@ -196,6 +198,7 @@ pub const Compiler = struct {
         self.temp_names.deinit(self.alloc);
         self.break_jumps.deinit(self.alloc);
         self.loop_result_regs.deinit(self.alloc);
+        self.test_suite_names.deinit(self.alloc);
     }
 
     /// pushes a new register onto the stack and returns it,
@@ -236,6 +239,25 @@ pub const Compiler = struct {
         try self.compileClosureBody(&.{}, expr, "__main", null);
         try self.emit(.call, 0);
         try self.emit(.halt, 0);
+    }
+
+    fn formatSuiteTestName(self: *Compiler, test_name: []const u8) ![]u8 {
+        var out = try std.ArrayList(u8).initCapacity(self.alloc, test_name.len + 16);
+        errdefer out.deinit(self.alloc);
+
+        if (self.test_suite_names.items.len == 0) {
+            try out.appendSlice(self.alloc, test_name);
+            return out.toOwnedSlice(self.alloc);
+        }
+
+        try out.appendSlice(self.alloc, self.test_suite_names.items[0]);
+        for (self.test_suite_names.items[1..]) |suite_name| {
+            try out.appendSlice(self.alloc, "\" > \"");
+            try out.appendSlice(self.alloc, suite_name);
+        }
+        try out.appendSlice(self.alloc, "\" > \"");
+        try out.appendSlice(self.alloc, test_name);
+        return out.toOwnedSlice(self.alloc);
     }
 
     fn compileValue(self: *Compiler, expr: *const Node) InternalLowerError!void {
@@ -411,8 +433,10 @@ pub const Compiler = struct {
             .test_block => |block| {
                 if (self.test_mode) {
                     if (!block.skip) {
+                        const test_label = try self.formatSuiteTestName(block.name);
+                        defer self.alloc.free(test_label);
                         try self.emit(.load_global, try self.vm.internAtom("@dotest"));
-                        try self.emitConst(try self.vm.ownDataString(block.name));
+                        try self.emitConst(try self.vm.ownDataString(test_label));
                         try self.compile(block.body, true);
                         try self.emit(.call, 2);
                         try self.releaseRegister();
@@ -422,6 +446,8 @@ pub const Compiler = struct {
             },
             .test_suite => |suite| {
                 if (self.test_mode) {
+                    try self.test_suite_names.append(self.alloc, suite.name);
+                    defer _ = self.test_suite_names.pop();
                     for (suite.tests) |test_node| {
                         try self.compile(test_node, false);
                     }
