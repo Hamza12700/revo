@@ -1554,10 +1554,17 @@ pub const Compiler = struct {
         //       i am genuinely surprised this doesnt break defining globals from arms
         //
         const saved_next_slot = state.next_slot;
+        const saved_active = self.active_registers;
+        const saved_max = self.max_registers;
 
         // single scope for whole match's subject
         try self.pushScope();
         errdefer self.popScope();
+        errdefer {
+            self.active_registers = saved_active;
+            self.max_registers = saved_max;
+            state.next_slot = saved_next_slot;
+        }
 
         const subject_name = try self.nextTemp("__match_subject");
         const subject_slot = try self.declareLocal(subject_name, false);
@@ -1965,6 +1972,13 @@ pub const Compiler = struct {
         then_expr: *const Node,
         else_expr: ?*Node,
     ) InternalLowerError!void {
+        const saved_active = self.active_registers;
+        const saved_max = self.max_registers;
+        errdefer {
+            self.active_registers = saved_active;
+            self.max_registers = saved_max;
+        }
+
         try self.compile(condition, true);
         const else_jump = try self.emitJump(.jump_if_false);
         const branch_base_registers = self.active_registers;
