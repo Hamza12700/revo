@@ -561,6 +561,27 @@ pub const Compiler = struct {
         , 2);
     }
 
+    test "compile failure unwinds function state" {
+        var vm = try VM.init(testing.runtime());
+        defer vm.deinit();
+
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+
+        const root = try lang.parseSource(arena.allocator(),
+            \\ const f = fn() do
+            \\   y = 1
+            \\ end
+        );
+
+        var compiler = try Compiler.init(&vm, false);
+        defer compiler.deinit();
+
+        try std.testing.expectError(error.LoweringFailed, compiler.compileRoot(root));
+        try std.testing.expectEqual(@as(usize, 0), compiler.functions.items.len);
+        try std.testing.expectEqual(@as(usize, 0), compiler.active_registers);
+    }
+
     fn compilePipe(self: *Compiler, left: *const Node, right: *const Node) InternalLowerError!void {
         switch (right.expr) {
             .ident, .field => {
@@ -1004,6 +1025,10 @@ pub const Compiler = struct {
         const body_addr: ProgramCounter = @intCast(self.instructions.items.len);
         const caller_registers = self.active_registers;
         const caller_max_registers = self.max_registers;
+        errdefer {
+            self.active_registers = caller_registers;
+            self.max_registers = caller_max_registers;
+        }
 
         var state = try FunctionState.init(self.alloc);
         for (params, 0..) |param, idx| {
@@ -1021,6 +1046,12 @@ pub const Compiler = struct {
         self.functions.append(self.alloc, state) catch |err| {
             state.deinit(self.alloc);
             return err;
+        };
+
+        var state_pushed = true;
+        errdefer if (state_pushed) {
+            var leaked = self.functions.pop().?;
+            leaked.deinit(self.alloc);
         };
 
         const prev_in_loop = self.in_loop_depth;
@@ -1061,6 +1092,7 @@ pub const Compiler = struct {
             .const_local_bits = &.{},
         });
         try self.emit(.closure, proto_id);
+        state_pushed = false;
     }
 
     fn collectConstLocals(self: *Compiler, locals: []const LocalVar) ![]LocalSlot {
