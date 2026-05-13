@@ -1215,13 +1215,13 @@ fn returnRegister(self: *VM, instr: Instruction) EvalError!void {
                 else
                     null;
                 if (tuple.items.len >= 2) {
-                    var buf = try std.ArrayList(u8).initCapacity(self.runtime.alloc, 16);
-                    defer buf.deinit(self.runtime.alloc);
-                    tuple.items[1].write(&buf, self, .display) catch |err| switch (err) {
+                    var buf = std.Io.Writer.Allocating.init(self.runtime.alloc);
+                    defer buf.deinit();
+                    tuple.items[1].write(&buf.writer, self, .display) catch |err| switch (err) {
                         error.OutOfMemory => return error.OutOfMemory,
                         else => return error.Panic,
                     };
-                    try self.setPanicMessage(buf.items);
+                    try self.setPanicMessage(buf.written());
                 }
                 return error.Panic;
             }
@@ -1725,13 +1725,13 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 if (propagate_errors) {
                     if (self.currentFiber().frames.items.len == 2) {
                         if (tuple.items.len > 1) {
-                            var buf = try std.ArrayList(u8).initCapacity(self.runtime.alloc, 16);
-                            defer buf.deinit(self.runtime.alloc);
-                            tuple.items[1].write(&buf, self, .display) catch |err| switch (err) {
+                            var buf = std.Io.Writer.Allocating.init(self.runtime.alloc);
+                            defer buf.deinit();
+                            tuple.items[1].write(&buf.writer, self, .display) catch |err| switch (err) {
                                 error.OutOfMemory => return error.OutOfMemory,
                                 else => return error.Panic,
                             };
-                            try self.setPanicMessage(buf.items);
+                            try self.setPanicMessage(buf.written());
                         }
                         self.panic_span = if (self.currentDebugInfo()) |debug|
                             self.spanAtPc(debug, if (self.currentFiber().pc > 0) self.currentFiber().pc - 1 else 0)

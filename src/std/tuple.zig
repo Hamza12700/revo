@@ -91,10 +91,10 @@ fn mul(args: []const Data, vm: *VM) !NativeResult {
 }
 
 fn _tostring(args: []const Data, vm: *VM) !NativeResult {
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 8);
-    defer buf.deinit(vm.runtime.alloc);
-    try args[0].write(&buf, vm, .display);
-    const str = try buf.toOwnedSlice(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
+    try args[0].write(&buf.writer, vm, .display);
+    const str = try buf.toOwnedSlice();
     return .{ .ok = try vm.adoptDataString(str) };
 }
 
@@ -104,9 +104,9 @@ fn _debug(args: []const Data, vm: *VM) !NativeResult {
         else => return .errType(0, "tuple", @tagName(args[0])),
     };
     const tuple = try vm.tuples.get(id);
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 8);
-    defer buf.deinit(vm.runtime.alloc);
-    try tuple.write(&buf, vm, .debug);
-    const str = try buf.toOwnedSlice(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
+    try tuple.write(&buf.writer, vm, .debug);
+    const str = try buf.toOwnedSlice();
     return .{ .ok = try vm.adoptDataString(str) };
 }

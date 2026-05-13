@@ -20,14 +20,14 @@ pub const Tuple = struct {
         return self.items.len;
     }
 
-    pub fn write(self: *Tuple, buf: *std.ArrayList(u8), vm: *revo.VM, mode: Data.RenderMode) !void {
-        try buf.appendSlice(vm.runtime.alloc, "(");
+    pub fn write(self: *Tuple, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) !void {
+        try writer.writeAll("(");
         for (self.items, 0..) |item, i| {
-            if (i != 0) try buf.appendSlice(vm.runtime.alloc, ", ");
-            try item.write(buf, vm, mode);
+            if (i != 0) try writer.writeAll(", ");
+            try item.write(writer, vm, mode);
         }
-        if (self.items.len == 1) try buf.appendSlice(vm.runtime.alloc, ",");
-        try buf.appendSlice(vm.runtime.alloc, ")");
+        if (self.items.len == 1) try writer.writeAll(",");
+        try writer.writeAll(")");
     }
 };
 

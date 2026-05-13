@@ -190,12 +190,11 @@ fn compileSource(init: std.process.Init, vm: *VM, gpa: Allocator, source_name: [
     };
 }
 
-fn printResult(init: std.process.Init, vm: *VM) !void {
-    var res = std.ArrayList(u8).initCapacity(vm.runtime.alloc, 1024) catch return;
-    vm.mainResult().write(&res, vm, .debug) catch return;
-    const s = res.toOwnedSlice(init.gpa) catch return;
-    defer init.gpa.free(s);
-    std.debug.print("{s}", .{s});
+fn printResult(vm: *VM) !void {
+    var res = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer res.deinit();
+    vm.mainResult().write(&res.writer, vm, .debug) catch return;
+    std.debug.print("{s}", .{res.written()});
 }
 
 fn runCompiledArtifact(
@@ -211,7 +210,7 @@ fn runCompiledArtifact(
 
     const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
     switch (run_result) {
-        .ok => if (echo_last) try printResult(init, vm),
+        .ok => if (echo_last) try printResult(vm),
         .err => |failure| {
             var buf = std.Io.Writer.Allocating.init(gpa);
             defer buf.deinit();
@@ -371,7 +370,7 @@ fn benchArtifact(
     vm.resetPerfCounters();
     const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
     switch (run_result) {
-        .ok => if (echo_last) try printResult(init, vm),
+        .ok => if (echo_last) try printResult(vm),
         .err => |failure| printRuntimeFailure(init, failure, source),
     }
 

@@ -156,18 +156,18 @@ fn concat(args: []const Data, vm: *VM) !NativeResult {
     };
 
     const table = vm.tables.get(table_id) catch return .errType(0, "table", dataToString(args[0]));
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 32);
-    defer buf.deinit(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
 
     for (table.array.items, 0..) |item, idx| {
-        if (idx > 0) try buf.appendSlice(vm.runtime.alloc, delim);
-        var temp = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 8);
-        defer temp.deinit(vm.runtime.alloc);
-        try item.write(&temp, vm, .display);
-        try buf.appendSlice(vm.runtime.alloc, temp.items);
+        if (idx > 0) try buf.writer.writeAll(delim);
+        var temp = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+        defer temp.deinit();
+        try item.write(&temp.writer, vm, .display);
+        try buf.writer.writeAll(temp.written());
     }
 
-    const slice = try buf.toOwnedSlice(vm.runtime.alloc);
+    const slice = try buf.toOwnedSlice();
     const result = try vm.adoptDataString(slice);
     return .{ .ok = result };
 }
@@ -418,10 +418,10 @@ fn tostring(args: []const Data, vm: *VM) !NativeResult {
         else => return .errType(0, "table", dataToString(args[0])),
     };
     const tbl = try vm.tables.get(table_id);
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 8);
-    defer buf.deinit(vm.runtime.alloc);
-    try tbl.write(&buf, vm, .display);
-    const slice = try buf.toOwnedSlice(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
+    try tbl.write(&buf.writer, vm, .display);
+    const slice = try buf.toOwnedSlice();
     const result = try vm.adoptDataString(slice);
     return .okData(result);
 }
@@ -434,10 +434,10 @@ fn debug(args: []const Data, vm: *VM) !NativeResult {
         else => return .errType(0, "table", dataToString(args[0])),
     };
     const tbl = try vm.tables.get(table_id);
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 8);
-    defer buf.deinit(vm.runtime.alloc);
-    try tbl.write(&buf, vm, .debug);
-    const slice = try buf.toOwnedSlice(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
+    try tbl.write(&buf.writer, vm, .debug);
+    const slice = try buf.toOwnedSlice();
     const result = try vm.adoptDataString(slice);
     return .okData(result);
 }

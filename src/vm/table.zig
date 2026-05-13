@@ -325,27 +325,27 @@ pub const Table = struct {
         return 64 + 16 * self.count();
     }
 
-    pub fn write(self: *Table, buf: *std.ArrayList(u8), vm: *revo.VM, mode: Data.RenderMode) anyerror!void {
-        try buf.appendSlice(vm.runtime.alloc, "{ ");
+    pub fn write(self: *Table, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) anyerror!void {
+        try writer.writeAll("{ ");
         const should_write_idx = self.hash_entries.count() != 0;
         for (self.array.items, 0..) |val, idx| {
             if (should_write_idx) {
-                try Data.new.num(idx).write(buf, vm, mode);
-                try buf.appendSlice(vm.runtime.alloc, ": ");
+                try Data.new.num(idx).write(writer, vm, mode);
+                try writer.writeAll(": ");
             }
-            try val.write(buf, vm, mode);
-            try buf.appendSlice(vm.runtime.alloc, ", ");
+            try val.write(writer, vm, mode);
+            try writer.writeAll(", ");
         }
         for (self.hash_order.items) |key| {
             const val = self.hash_entries.get(key) orelse continue;
             if (should_write_idx) {
-                try key.write(buf, vm, mode);
-                try buf.appendSlice(vm.runtime.alloc, ": ");
+                try key.write(writer, vm, mode);
+                try writer.writeAll(": ");
             }
-            try val.write(buf, vm, mode);
-            try buf.appendSlice(vm.runtime.alloc, ", ");
+            try val.write(writer, vm, mode);
+            try writer.writeAll(", ");
         }
-        try buf.appendSlice(vm.runtime.alloc, "}");
+        try writer.writeAll("}");
     }
 };
 

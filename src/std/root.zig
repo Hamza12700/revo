@@ -212,8 +212,8 @@ pub fn fmt(args: []const Data, vm: *VM) !NativeResult {
         else => unreachable,
     };
 
-    var result = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 4);
-    defer result.deinit(vm.runtime.alloc);
+    var result = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer result.deinit();
 
     var arg_idx: usize = 1;
     var i: usize = 0;
@@ -223,7 +223,7 @@ pub fn fmt(args: []const Data, vm: *VM) !NativeResult {
             switch (format[i + 1]) {
                 'v' => {
                     if (arg_idx >= args.len) return .errArity(args.len, arg_idx + 1);
-                    try append_data(&result, args[arg_idx], vm, .display);
+                    try append_data(&result.writer, args[arg_idx], vm, .display);
                     arg_idx += 1;
                     i += 2;
                 },
@@ -235,25 +235,25 @@ pub fn fmt(args: []const Data, vm: *VM) !NativeResult {
                         .atom => try vm.ownDataString("<un-tonumber-able>"),
                         else => Data.new.num(0),
                     };
-                    try append_data(&result, v, vm, .display);
+                    try append_data(&result.writer, v, vm, .display);
                     arg_idx += 1;
                     i += 2;
                 },
                 '?' => {
                     if (arg_idx >= args.len) return .errArity(args.len, arg_idx + 1);
-                    try append_data(&result, args[arg_idx], vm, .debug);
+                    try append_data(&result.writer, args[arg_idx], vm, .debug);
                     arg_idx += 1;
                     i += 2;
                 },
                 else => {},
             }
         } else {
-            try result.append(vm.runtime.alloc, format[i]);
+            try result.writer.writeByte(format[i]);
             i += 1;
         }
     }
 
-    const str = try result.toOwnedSlice(vm.runtime.alloc);
+    const str = try result.toOwnedSlice();
     return .{ .ok = try vm.adoptDataString(str) };
 }
 
@@ -312,15 +312,15 @@ pub fn dotest(args: []const Data, vm: *VM) !NativeResult {
         if (tpl.items[0] != .atom or tpl.items[0].atom != revo.core_atoms.atom_id(.err))
             return .{ .ok = Data.new.nil() };
 
-        var obuf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 4);
-        defer obuf.deinit(vm.runtime.alloc);
-        try append_data(&obuf, tpl.items[1], vm, .debug);
+        var obuf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+        defer obuf.deinit();
+        try append_data(&obuf.writer, tpl.items[1], vm, .debug);
 
         try revo.pretty.printError(
             vm.runtime.alloc,
             &w.interface,
             "fail - {s}",
-            .{obuf.items},
+            .{obuf.written()},
         );
         // std.debug.print("* failed: {s}\n", .{buf.items});
     }
@@ -543,10 +543,10 @@ fn struct_new(args: []const Data, vm: *VM) !NativeResult {
 pub fn tostring(args: []const Data, vm: *VM) !NativeResult {
     const mm = try vm.getMetamethod(args[0], "__tostring");
     if (mm) |m| return call_unary_metamethod(m, args[0], vm);
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 8);
-    defer buf.deinit(vm.runtime.alloc);
-    try args[0].write(&buf, vm, .display);
-    const str = try buf.toOwnedSlice(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
+    try args[0].write(&buf.writer, vm, .display);
+    const str = try buf.toOwnedSlice();
     return .{ .ok = try vm.adoptDataString(str) };
 }
 
@@ -742,10 +742,10 @@ pub fn print(args: []const Data, vm: *VM) !NativeResult {
         return okAtom(vm);
     }
     for (args, 0..) |a, idx| {
-        var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 4);
-        defer buf.deinit(vm.runtime.alloc);
-        try append_data(&buf, a, vm, .display);
-        std.debug.print("{s}", .{buf.items});
+        var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+        defer buf.deinit();
+        try append_data(&buf.writer, a, vm, .display);
+        std.debug.print("{s}", .{buf.written()});
         if (idx < args.len - 1) std.debug.print(" ", .{});
     }
     std.debug.print("\n", .{});
@@ -756,17 +756,17 @@ pub fn print(args: []const Data, vm: *VM) !NativeResult {
 /// panics with given message
 ///     panic("something went wrong")
 pub fn panic_(args: []const Data, vm: *VM) !NativeResult {
-    var buf = try std.ArrayList(u8).initCapacity(vm.runtime.alloc, 16);
-    defer buf.deinit(vm.runtime.alloc);
+    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
+    defer buf.deinit();
     if (args.len == 0) {
-        try buf.appendSlice(vm.runtime.alloc, "panic");
+        try buf.writer.writeAll("panic");
     } else {
         for (args, 0..) |arg, idx| {
-            if (idx != 0) try buf.appendSlice(vm.runtime.alloc, " ");
-            try append_data(&buf, arg, vm, .display);
+            if (idx != 0) try buf.writer.writeAll(" ");
+            try append_data(&buf.writer, arg, vm, .display);
         }
     }
-    try vm.setPanicMessage(buf.items);
+    try vm.setPanicMessage(buf.written());
     return .other("panic");
 }
 
@@ -979,7 +979,7 @@ fn resolveImportPath(raw_path: []const u8, base_dir: ?[]const u8, vm: *VM) ![]co
 
 const RenderMode = enum { display, debug };
 
-fn append_data(buf: *std.ArrayList(u8), val: Data, vm: *VM, mode: RenderMode) !void {
+fn append_data(writer: *std.Io.Writer, val: Data, vm: *VM, mode: RenderMode) !void {
     switch (mode) {
         .display => {
             const mm = try vm.getMetamethod(val, "__display");
@@ -992,7 +992,7 @@ fn append_data(buf: *std.ArrayList(u8), val: Data, vm: *VM, mode: RenderMode) !v
                     },
                     .err => "",
                 };
-                try buf.appendSlice(vm.runtime.alloc, str);
+                try writer.writeAll(str);
                 return;
             }
             const mm2 = try vm.getMetamethod(val, "__tostring");
@@ -1005,12 +1005,12 @@ fn append_data(buf: *std.ArrayList(u8), val: Data, vm: *VM, mode: RenderMode) !v
                     },
                     .err => "",
                 };
-                try buf.appendSlice(vm.runtime.alloc, str);
+                try writer.writeAll(str);
                 return;
             }
-            try val.write(buf, vm, .display);
+            try val.write(writer, vm, .display);
         },
-        .debug => try val.write(buf, vm, .debug),
+        .debug => try val.write(writer, vm, .debug),
     }
 }
 

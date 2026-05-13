@@ -48,7 +48,7 @@ pub const Data = union(Type) {
 
     pub const RenderMode = enum(u1) { display, debug };
 
-    pub fn write(self: Data, buf: *std.ArrayList(u8), vm: *revo.VM, mode: RenderMode) anyerror!void {
+    pub fn write(self: Data, writer: *std.Io.Writer, vm: *revo.VM, mode: RenderMode) anyerror!void {
         if (mode == .debug) {
             if (try vm.getMetamethod(self, "__debug")) |mm| {
                 const result = switch (mm) {
@@ -57,7 +57,7 @@ pub const Data = union(Type) {
                 };
                 switch (result) {
                     .string => |id| {
-                        try buf.appendSlice(vm.runtime.alloc, vm.stringValue(id));
+                        try writer.writeAll(vm.stringValue(id));
                         return;
                     },
                     else => return error.TypeError,
@@ -67,76 +67,59 @@ pub const Data = union(Type) {
 
         switch (self) {
             .number => |n| {
-                const s = try std.fmt.allocPrint(vm.runtime.alloc, "{}", .{n});
-                defer vm.runtime.alloc.free(s);
-                try buf.appendSlice(vm.runtime.alloc, s);
+                try writer.print("{}", .{n});
             },
             .string => |id| switch (mode) {
-                .display => try buf.appendSlice(vm.runtime.alloc, vm.stringValue(id)),
+                .display => try writer.writeAll(vm.stringValue(id)),
                 .debug => {
-                    const s = try std.fmt.allocPrint(vm.runtime.alloc, "\"{s}\"", .{vm.stringValue(id)});
-                    defer vm.runtime.alloc.free(s);
-                    try buf.appendSlice(vm.runtime.alloc, s);
+                    try writer.print("\"{s}\"", .{vm.stringValue(id)});
                 },
             },
             .atom => |id| {
-                const s = try std.fmt.allocPrint(vm.runtime.alloc, ":{s}", .{vm.atomName(id)});
-                defer vm.runtime.alloc.free(s);
-                try buf.appendSlice(vm.runtime.alloc, s);
+                try writer.print(":{s}", .{vm.atomName(id)});
             },
             .function => |id| {
                 const f = try vm.functions.get(id);
                 switch (f.*) {
                     .native => {
-                        const s = try std.fmt.allocPrint(vm.runtime.alloc, "#fn(){}/{}", .{ id, f.arity() });
-                        defer vm.runtime.alloc.free(s);
-                        try buf.appendSlice(vm.runtime.alloc, s);
+                        try writer.print("#fn(){}/{}", .{ id, f.arity() });
                     },
                     .c_function => |cf| {
-                        const s = try std.fmt.allocPrint(vm.runtime.alloc, "${s}@{}()/{}", .{ cf.name, id, f.arity() });
-                        defer vm.runtime.alloc.free(s);
-                        try buf.appendSlice(vm.runtime.alloc, s);
+                        try writer.print("${s}@{}()/{}", .{ cf.name, id, f.arity() });
                     },
                     .closure => {
-                        const s = try std.fmt.allocPrint(vm.runtime.alloc, "{s}()/{d}", .{ f.name(), f.arity() });
-                        defer vm.runtime.alloc.free(s);
-                        try buf.appendSlice(vm.runtime.alloc, s);
+                        try writer.print("{s}()/{d}", .{ f.name(), f.arity() });
                     },
                 }
             },
             .table => |id| {
                 const table = vm.tables.get(id) catch {
-                    try buf.appendSlice(vm.runtime.alloc, "<dead-table>");
+                    try writer.writeAll("<dead-table>");
                     return;
                 };
-
-                table.write(buf, vm, mode) catch {
-                    try buf.appendSlice(vm.runtime.alloc, "<table-unprintable>");
+                table.write(writer, vm, mode) catch {
+                    try writer.writeAll("<table-unprintable>");
                 };
             },
             .tuple => |id| {
                 const tuple = vm.tuples.get(id) catch {
-                    try buf.appendSlice(vm.runtime.alloc, "<dead-tuple>");
+                    try writer.writeAll("<dead-tuple>");
                     return;
                 };
-                tuple.write(buf, vm, mode) catch {
-                    try buf.appendSlice(vm.runtime.alloc, "<tuple-unprintable>");
+                tuple.write(writer, vm, mode) catch {
+                    try writer.writeAll("<tuple-unprintable>");
                 };
             },
         }
     }
 
     pub fn print(self: Data, vm: *revo.VM) void {
-        var buf = std.ArrayList(u8).initCapacity(vm.runtime.alloc, 4) catch {
-            std.debug.print("<oom>", .{});
-            return;
-        };
-        defer buf.deinit(vm.runtime.alloc);
-        self.write(&buf, vm, .debug) catch {
+        var buf: [16]u8 = undefined;
+        var stdout = vm.runtime.stdout.writer(vm.runtime.io, &buf);
+        self.write(&stdout.interface, vm, .debug) catch {
             std.debug.print("<print-error>", .{});
             return;
         };
-        std.debug.print("{s}", .{buf.items});
     }
 
     pub fn as_number(self: Data) !f64 {
