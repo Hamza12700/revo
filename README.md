@@ -59,10 +59,18 @@ examples:
 
 ```bash
 zig build # debug build
-zig build -Doptimize=ReleaseFast # release built
+zig build run # debug run (repl implementation is hardcoded to a very simple one)
+zig build -Doptimize=ReleaseFast # release build
 zig build -Drepl=none # custom repl backend (bestline, readline, libedit, none)
+# build C library + auto-generated header
+# check zig-out/include/, zig-out/lib/
+zig build lib 
 ```
+
 the default repl backend is the vendored bestline, linked statically. read [build.zig](./build.zig)
+
+**note:** the C library and header are only built with `zig build lib`.
+the auto-generated header is always in sync with exported functions, marked with `callconv("c")`
 
 ### running tests
 

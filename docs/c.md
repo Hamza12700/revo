@@ -39,6 +39,7 @@ void echo(void *vm, size_t argc, RevoData *argv, RevoData *out_result);
 include `revo.h` in your C code.
 it lives at the repository root and is installed to `zig-out/include/`.
 
+after running `zig build lib`, the header is available at `zig-out/include/revo.h` and the auto-generated header is always in sync with exported functions
 ### examples
 
 here are the terse core examples from `examples/ffi/all.c`:

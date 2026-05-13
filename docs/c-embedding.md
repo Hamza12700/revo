@@ -11,13 +11,17 @@ see `examples/c/basic.c` for a minimal working program
 
 ## build
 
-build the library with:
+build the c library and header with:
 
 ```bash
-zig build
+zig build lib
 ```
 
-the static library ends up in `zig-out/lib/liberevo.a`
+the static library and auto-generated header end up in:
+- `zig-out/lib/liberevo.a`
+- `zig-out/include/revo.h`
+
+the header is automatically generated from all functions marked with `callconv("c")` and prefixed by `erevo_` and `revo_` in the codebase, so it's always in sync with the implementation
 
 ## create a vm
 

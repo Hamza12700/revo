@@ -85,8 +85,26 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "revo", .root_module = exe_root });
     b.installArtifact(exe);
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
+    // run exe code is duped to make it not link with a line editor even explicitly
+    // TODO make it link with a line editor when specified explicitly
+    const run_exe_root = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_build_options = b.addOptions();
+    run_build_options.addOption(ReplBackend, "repl_backend", .none);
+    run_build_options.addOption([]const u8, "version", VERSION);
+    if (!is_freestanding) {
+        run_exe_root.addOptions("build_options", run_build_options);
+    }
+    for (imports) |imp| run_exe_root.addImport(imp[0], imp[1]);
+
+    const run_exe = b.addExecutable(.{ .name = "revo-run", .root_module = run_exe_root });
+
+    const run_cmd = b.addRunArtifact(run_exe);
+
+
     if (b.args) |args| run_cmd.addArgs(args);
     b.step("run", "run the cli").dependOn(&run_cmd.step);
 
@@ -160,5 +178,15 @@ pub fn build(b: *std.Build) void {
     const lib_step = b.step("lib", "build the erevo library");
     lib_step.dependOn(&b.addInstallArtifact(lib, .{}).step);
 
-    b.getInstallStep().dependOn(&b.addInstallHeaderFile(b.path("revo.h"), "revo.h").step);
+    const write_files = b.addWriteFiles();
+    const bindings = @import("src/bindings.zig");
+    const header_data = bindings.data(b.allocator) catch |err| {
+        std.debug.print("failed to autogen header: {any}\n", .{err});
+        std.process.exit(1);
+    };
+    const header_path = write_files.add("revo.h", header_data.items);
+
+    const install_header_file = b.addInstallHeaderFile(header_path, "revo.h");
+    install_header_file.step.dependOn(&write_files.step);
+    lib_step.dependOn(&install_header_file.step);
 }
