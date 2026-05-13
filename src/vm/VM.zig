@@ -733,7 +733,7 @@ pub fn runReport(self: *VM) !EvalResult {
     return .ok;
 }
 
-pub fn callFunction(self: *VM, callee: Data, args: []const Data) EvalError!Data {
+fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const Data) EvalError!Data {
     self.host_call_depth += 1;
     defer self.host_call_depth -= 1;
 
@@ -760,12 +760,16 @@ pub fn callFunction(self: *VM, callee: Data, args: []const Data) EvalError!Data 
         }
     }
     try fiber.slots.append(self.runtime.alloc, callee);
+    if (maybe_first) |first| {
+        try fiber.slots.append(self.runtime.alloc, first);
+    }
     for (args) |arg| try fiber.slots.append(self.runtime.alloc, arg);
 
     const call_reg_usize = callee_slot - base;
     if (call_reg_usize > std.math.maxInt(opcode.Register)) return error.InvalidBytecode;
     const call_reg: opcode.Register = @intCast(call_reg_usize);
-    const argc: opcode.Register = @intCast(args.len);
+    const argc_usize = args.len + if (maybe_first != null) @as(usize, 1) else @as(usize, 0);
+    const argc: opcode.Register = @intCast(argc_usize);
 
     try self.callRegister(.{
         .op = .call,
@@ -788,6 +792,11 @@ pub fn callFunction(self: *VM, callee: Data, args: []const Data) EvalError!Data 
     const result = fiber.slots.items[callee_slot];
     fiber.slots.items.len = callee_slot;
     return result;
+}
+
+// TODO inline everywhere
+pub inline fn callFunction(self: *VM, callee: Data, args: []const Data) EvalError!Data {
+    return self.callFunctionParts(callee, null, args);
 }
 
 pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
@@ -987,13 +996,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
             const args_end = args_start + argc;
             try self.ensureAbsoluteSlot(args_end);
             const args = self.currentFiber().slots.items[args_start..args_end];
-
-            var call_args = try self.runtime.alloc.alloc(Data, args.len + 1);
-            defer self.runtime.alloc.free(call_args);
-            call_args[0] = callee;
-            @memcpy(call_args[1..], args);
-
-            const result = try self.callFunction(mm, call_args);
+            const result = try self.callFunctionParts(mm, callee, args);
             try self.writeRegister(instr.c, result);
             return;
         }
@@ -1009,13 +1012,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
                 const args_end = args_start + argc;
                 try self.ensureAbsoluteSlot(args_end);
                 const args = self.currentFiber().slots.items[args_start..args_end];
-
-                var call_args = try self.runtime.alloc.alloc(Data, args.len + 1);
-                defer self.runtime.alloc.free(call_args);
-                call_args[0] = callee;
-                @memcpy(call_args[1..], args);
-
-                const result = try self.callFunction(struct_new_fn, call_args);
+                const result = try self.callFunctionParts(struct_new_fn, callee, args);
                 try self.writeRegister(instr.c, result);
                 return;
             }
