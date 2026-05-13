@@ -21,6 +21,7 @@ pub fn register_stdlib(vm: *revo.VM) !void {
         .{ .name = "tostring", .f = define(&[_]TypeSpec{.any}, tostring) },
         .{ .name = "tonumber", .f = define(&[_]TypeSpec{.any}, tonumber) },
         .{ .name = "expect", .f = define(&[_]TypeSpec{.any}, expect) },
+        .{ .name = "expect_eq", .f = define(&[_]TypeSpec{.any}, expect_eq) },
         .{ .name = "assert", .f = define(&[_]TypeSpec{.any}, assert_) },
         .{ .name = "assert_eq", .f = define(&[_]TypeSpec{ .any, .any }, assert_eq) },
         .{ .name = "set_debug", .f = define(&[_]TypeSpec{.table}, meta.set_debug) },
@@ -697,18 +698,27 @@ pub fn tonumber(args: []const Data, vm: *VM) !NativeResult {
 ///
 /// return the value back if truthy, otherwise (:err, :AssertionFailed)
 pub fn expect(args: []const Data, vm: *VM) !NativeResult {
-    if (revo.isFalse(args[0])) return .Err(vm, "AssertionFailed");
+    if (revo.isFalse(args[0])) return .Err(vm, "ExpectFailed");
     return .Ok(vm, args[0]);
 }
 
-/// > assert(what: any) -> !:ok
+/// > expect_eq(what: any) -> !:ok
+/// panics if the value is falsy
+pub fn expect_eq(args: []const Data, vm: *VM) !NativeResult {
+    if (vm.compare(args[0], args[1]) != .eq) {
+        return .Err(vm, "NotEqual");
+    }
+    return .Ok(vm, args[0]);
+}
+
+/// > assert(what: any) -> what
 /// panics if the value is falsy
 pub fn assert_(args: []const Data, vm: *VM) !NativeResult {
     if (revo.isFalse(args[0])) return panic_(&[1]Data{args[0]}, vm);
     return .okData(args[0]);
 }
 
-/// > assert(what: any) -> !:ok
+/// > assert(what: any) -> what
 /// panics if the value is falsy
 pub fn assert_eq(args: []const Data, vm: *VM) !NativeResult {
     if (vm.compare(args[0], args[1]) != .eq) {

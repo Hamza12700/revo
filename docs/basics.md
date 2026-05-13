@@ -305,7 +305,6 @@ match safe_div(10, 0)
 ```
 
 # pipe operator
-
 pipe passes a value as the first argument to the next function:
 ```ruby
 fn double(x) x * 2
@@ -317,6 +316,47 @@ fn add_one(x) x + 1
 # chain with intermediate vars
 const val = 5 |> add_one # 6
 val |> double            # 12
+```
+
+they apply to most of the language, since everything will likely return something useful 
+```ruby
+const res = (2 + 2)
+  |> assert_eq(4) 
+  # assert has nothing useful to return, so it should return the value you passed in
+  |> inspect # will print and return back the value
+  |> tostring # tostring will never error
+```
+
+pipes can also be used for error handling
+
+```ruby
+# ok pipe
+a = (:ok, 20)
+  |>? fn(x) x + 22
+assert_eq(a, 42)
+
+# err pipe
+a = (:err, :DiskFull)
+  |>~ fn(v) fmt("handled %v", v)
+assert_eq(a, "handled (:err, :DiskFull)")
+
+# mixed
+a =
+  tonumber("no")
+  |>? fn(n) n + 1
+  |>~ fn(v) 0
+  |> assert_eq(0)
+```
+
+becomes very powerful when mixed with expect:
+```ruby
+fn f(what) what * 2
+  |> expect_eq(4) # will return either (:err, :NotEqual) or (:ok, 4)
+  |>? "is correct"
+  |>~ "is incorrect"
+
+f(2)
+f(4)
 ```
 
 # iteration

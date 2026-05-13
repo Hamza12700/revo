@@ -46,3 +46,12 @@ tonumber("42")
   |>? fn(n) n + 1
   |>~ fn(v) 0
   |> assert_eq(43)
+
+fn ff(what)
+  (what * 2)
+  |> expect_eq(4) # will return either (:err, :NotEqual) or (:ok, 4)
+  |>? fn(_) "is correct"
+  |>~ fn(_) "is incorrect"
+
+ff(2) |> inspect
+ff(4) |> inspect
