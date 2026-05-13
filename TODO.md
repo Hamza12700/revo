@@ -60,6 +60,21 @@ these should be done before the language is considered complete:
 - [ ] established doc system
     - [ ] doc comment system
 
+- pipes
+    - [ ] pipe dot operator
+        ```ruby
+        "asdf"
+        |> .sub(1, 2)
+
+        is "asdf":sub(1, 2)
+        ```
+    - [ ] a way to short-circuit pipes
+        ```ruby
+        user
+        |> lookup
+        |> auth
+        ```
+
 
 ## perf
 

@@ -738,6 +738,7 @@ pub fn callFunction(self: *VM, callee: Data, args: []const Data) EvalError!Data 
     const caller_frame_depth = fiber.frames.items.len;
     const base = (try self.currentFrame()).base;
     const callee_slot = fiber.slots.items.len;
+    errdefer fiber.slots.items.len = callee_slot;
     try fiber.slots.append(self.runtime.alloc, callee);
     for (args) |arg| try fiber.slots.append(self.runtime.alloc, arg);
 
