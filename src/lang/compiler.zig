@@ -127,7 +127,6 @@ pub const Compiler = struct {
         all_locals: std.ArrayList(LocalVar),
         upvalues: std.ArrayList(UpvalueSpec),
         scope_starts: std.ArrayList(usize),
-        next_slot: LocalSlot,
 
         fn init(alloc: std.mem.Allocator) !FunctionState {
             return .{
@@ -135,7 +134,6 @@ pub const Compiler = struct {
                 .all_locals = try std.ArrayList(LocalVar).initCapacity(alloc, 8),
                 .upvalues = try std.ArrayList(UpvalueSpec).initCapacity(alloc, 4),
                 .scope_starts = try std.ArrayList(usize).initCapacity(alloc, 8),
-                .next_slot = 0,
             };
         }
 
@@ -153,6 +151,7 @@ pub const Compiler = struct {
     test_mode: bool,
     instructions: std.ArrayList(Instruction),
     functions: std.ArrayList(FunctionState),
+    slot_allocators: std.ArrayList(LocalSlot),
     temp_counter: usize = 0,
     temp_names: std.ArrayList([]u8),
     /// flat list of break jump instruction indices for all enclosing inline loops
@@ -178,6 +177,7 @@ pub const Compiler = struct {
             .test_mode = test_mode,
             .instructions = try std.ArrayList(Instruction).initCapacity(vm.runtime.alloc, 32),
             .functions = try std.ArrayList(FunctionState).initCapacity(vm.runtime.alloc, 4),
+            .slot_allocators = try std.ArrayList(LocalSlot).initCapacity(vm.runtime.alloc, 4),
             .spans = try std.ArrayList(ast.Span).initCapacity(vm.runtime.alloc, 32),
             .temp_names = try std.ArrayList([]u8).initCapacity(vm.runtime.alloc, 16),
             .break_jumps = try std.ArrayList(usize).initCapacity(vm.runtime.alloc, 16),
@@ -191,6 +191,7 @@ pub const Compiler = struct {
         for (self.temp_names.items) |name| self.alloc.free(name);
         for (self.functions.items) |*state| state.deinit(self.alloc);
         self.functions.deinit(self.alloc);
+        self.slot_allocators.deinit(self.alloc);
         self.instructions.deinit(self.alloc);
         self.spans.deinit(self.alloc);
         self.temp_names.deinit(self.alloc);
@@ -212,8 +213,9 @@ pub const Compiler = struct {
     fn popRegister(self: *Compiler) void {
         std.debug.assert(self.active_registers > 0);
         self.active_registers -= 1;
-        if (self.currentFunctionState()) |state| {
-            if (self.active_registers < state.next_slot) self.active_registers = state.next_slot;
+        if (self.slot_allocators.items.len > 0) {
+            const next_slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
+            if (self.active_registers < next_slot) self.active_registers = next_slot;
         }
     }
 
@@ -658,7 +660,9 @@ pub const Compiler = struct {
     }
 
     fn compilePipeAtTop(self: *Compiler, right: *const Node) InternalLowerError!void {
-        const tmp_name = try self.nextTemp("__pipe_tmp");
+        const tmp_name = try std.fmt.allocPrint(self.alloc, "__pipe_tmp_{d}", .{self.temp_counter});
+        self.temp_counter += 1;
+        try self.temp_names.append(self.alloc, tmp_name);
         const tmp_atom = try self.vm.internAtom(tmp_name);
         try self.emit(.store_global, tmp_atom);
         const left_node = Node{
@@ -869,11 +873,16 @@ pub const Compiler = struct {
                 state.deinit(self.alloc);
                 return err;
             };
+            self.slot_allocators.append(self.alloc, 0) catch |err| {
+                var leaked = self.functions.pop().?;
+                leaked.deinit(self.alloc);
+                return err;
+            };
             state_ptr = &self.functions.items[self.functions.items.len - 1];
         }
         const state = state_ptr.?;
-        const slot = state.next_slot;
-        state.next_slot += 1;
+        const slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
+        self.slot_allocators.items[self.slot_allocators.items.len - 1] += 1;
         const local: LocalVar = .{ .name = name, .slot = slot, .mutable = mutable, .initialized = false, .kind = .unknown };
         try state.locals.append(self.alloc, local);
         try state.all_locals.append(self.alloc, local);
@@ -881,9 +890,10 @@ pub const Compiler = struct {
     }
 
     fn reserveLocalSlots(self: *Compiler) void {
-        if (self.currentFunctionState()) |state| {
-            if (self.active_registers < state.next_slot) self.active_registers = state.next_slot;
-            if (self.max_registers < state.next_slot) self.max_registers = state.next_slot;
+        if (self.slot_allocators.items.len > 0) {
+            const next_slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
+            if (self.active_registers < next_slot) self.active_registers = next_slot;
+            if (self.max_registers < next_slot) self.max_registers = next_slot;
         }
     }
 
@@ -1084,9 +1094,14 @@ pub const Compiler = struct {
                 return err;
             };
         }
-        state.next_slot = @intCast(params.len);
+        const params_len: LocalSlot = @intCast(params.len);
         self.functions.append(self.alloc, state) catch |err| {
             state.deinit(self.alloc);
+            return err;
+        };
+        self.slot_allocators.append(self.alloc, params_len) catch |err| {
+            var leaked = self.functions.pop().?;
+            leaked.deinit(self.alloc);
             return err;
         };
 
@@ -1094,6 +1109,7 @@ pub const Compiler = struct {
         errdefer if (state_pushed) {
             var leaked = self.functions.pop().?;
             leaked.deinit(self.alloc);
+            _ = self.slot_allocators.pop().?;
         };
 
         const prev_in_loop = self.in_loop_depth;
@@ -1120,6 +1136,7 @@ pub const Compiler = struct {
 
         var finished = self.functions.pop().?;
         defer finished.deinit(self.alloc);
+        _ = self.slot_allocators.pop().?;
         const const_locals = try self.collectConstLocals(finished.all_locals.items);
         defer self.alloc.free(const_locals);
 
@@ -1346,13 +1363,12 @@ pub const Compiler = struct {
         defer loop.deinit();
 
         // all code is now inside __main (synthetic top-level function), so always use locals
-        const fn_state = &self.functions.items[self.functions.items.len - 1];
-        const iter_slot: Operand = @intCast(fn_state.next_slot);
-        fn_state.next_slot += 1;
+        const iter_slot: Operand = @intCast(self.slot_allocators.items[self.slot_allocators.items.len - 1]);
+        self.slot_allocators.items[self.slot_allocators.items.len - 1] += 1;
         const iter_storage: VarStorage = .{ .local = iter_slot };
 
-        const idx_slot: Operand = @intCast(fn_state.next_slot);
-        fn_state.next_slot += 1;
+        const idx_slot: Operand = @intCast(self.slot_allocators.items[self.slot_allocators.items.len - 1]);
+        self.slot_allocators.items[self.slot_allocators.items.len - 1] += 1;
         const idx_storage: VarStorage = .{ .local = idx_slot };
 
         // compile iter expression into iter storage
@@ -1506,7 +1522,9 @@ pub const Compiler = struct {
         param_count: usize,
         loop_sym: revo.AtomID,
     ) InternalLowerError!void {
-        const result_name = try self.nextTemp("__loop_result");
+        const result_name = try std.fmt.allocPrint(self.alloc, "__loop_result_{d}", .{self.temp_counter});
+        self.temp_counter += 1;
+        try self.temp_names.append(self.alloc, result_name);
         const result_sym = try self.vm.internAtom(result_name);
 
         if (param_count > 0) {
@@ -1588,14 +1606,14 @@ pub const Compiler = struct {
         subject: *const Node,
         arms: []const ast.MatchArm,
     ) InternalLowerError!void {
-        const state = self.currentFunctionState() orelse
+        if (self.currentFunctionState() == null)
             return self.fail(.UnsupportedSyntax, subject, "match requires function scope");
 
         // to restore after match
         // TODO: this also means you cant define globals from within matches
         //       i am genuinely surprised this doesnt break defining globals from arms
         //
-        const saved_next_slot = state.next_slot;
+        const saved_next_slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
         const saved_active = self.active_registers;
         const saved_max = self.max_registers;
 
@@ -1605,10 +1623,12 @@ pub const Compiler = struct {
         errdefer {
             self.active_registers = saved_active;
             self.max_registers = saved_max;
-            state.next_slot = saved_next_slot;
+            self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
         }
 
-        const subject_name = try self.nextTemp("__match_subject");
+        const subject_name = try std.fmt.allocPrint(self.alloc, "__match_subject_{d}", .{self.temp_counter});
+        self.temp_counter += 1;
+        try self.temp_names.append(self.alloc, subject_name);
         const subject_slot = try self.declareLocal(subject_name, false);
         try self.compile(subject, true);
         self.markLocalInitialized(subject_slot);
@@ -1677,7 +1697,7 @@ pub const Compiler = struct {
         self.popScope();
 
         // so that neighbouring code gets fresh slot numbers
-        state.next_slot = saved_next_slot;
+        self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
 
         // default case & success patches
         self.active_registers = arm_base_registers;
@@ -1695,8 +1715,10 @@ pub const Compiler = struct {
 
     fn reserveRegisters(self: *Compiler, min_register: Register) void {
         const min_slot: LocalSlot = @intCast(min_register);
-        if (self.currentFunctionState()) |state| {
-            if (state.next_slot < min_slot) state.next_slot = min_slot;
+        if (self.slot_allocators.items.len > 0) {
+            if (self.slot_allocators.items[self.slot_allocators.items.len - 1] < min_slot) {
+                self.slot_allocators.items[self.slot_allocators.items.len - 1] = min_slot;
+            }
         }
         if (self.active_registers < min_slot) self.active_registers = min_slot;
         if (self.max_registers < min_slot) self.max_registers = min_slot;
@@ -1750,7 +1772,9 @@ pub const Compiler = struct {
                         .tuple_pattern => {
                             try self.emitStorageLoad(source);
                             try self.emit(.tuple_get_const, idx);
-                            const nested_name = try self.nextTemp("__bind");
+                            const nested_name = try std.fmt.allocPrint(self.alloc, "__bind_{d}", .{self.temp_counter});
+                            self.temp_counter += 1;
+                            try self.temp_names.append(self.alloc, nested_name);
                             const nested_slot = try self.declareLocal(nested_name, false);
                             self.markLocalInitialized(nested_slot);
                             try self.emit(.bind_local, nested_slot);
@@ -1800,7 +1824,9 @@ pub const Compiler = struct {
                     const depth_before = self.active_registers;
                     try self.emitStorageLoad(subject);
                     try self.emit(.tuple_get_const, idx);
-                    const nested_name = try self.nextTemp("__match");
+                    const nested_name = try std.fmt.allocPrint(self.alloc, "__match_{d}", .{self.temp_counter});
+                    self.temp_counter += 1;
+                    try self.temp_names.append(self.alloc, nested_name);
                     const nested_slot = try self.declareLocal(nested_name, false);
                     self.markLocalInitialized(nested_slot);
                     try self.emit(.bind_local, nested_slot);
@@ -1908,7 +1934,9 @@ pub const Compiler = struct {
 
         try self.emit(.table_new, 0);
         try self.duplicateRegister();
-        const descriptor_name = try self.nextTemp("__struct_desc");
+        const descriptor_name = try std.fmt.allocPrint(self.alloc, "__struct_desc_{d}", .{self.temp_counter});
+        self.temp_counter += 1;
+        try self.temp_names.append(self.alloc, descriptor_name);
         const descriptor_sym = try self.vm.internAtom(descriptor_name);
         try self.emit(.store_global, descriptor_sym);
         try self.releaseRegister();
@@ -2014,16 +2042,16 @@ pub const Compiler = struct {
         then_expr: *const Node,
         else_expr: ?*Node,
     ) InternalLowerError!void {
-        const state = self.currentFunctionState() orelse
+        if (self.currentFunctionState() == null)
             return self.fail(.UnsupportedSyntax, condition, "if requires function scope");
 
-        const saved_next_slot = state.next_slot;
+        const saved_next_slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
         const saved_active = self.active_registers;
         const saved_max = self.max_registers;
         errdefer {
             self.active_registers = saved_active;
             self.max_registers = saved_max;
-            state.next_slot = saved_next_slot;
+            self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
         }
 
         try self.compile(condition, true);
@@ -2038,7 +2066,7 @@ pub const Compiler = struct {
         const end_jump = try self.emitJump(.jump);
         self.patchJump(else_jump);
         self.active_registers = branch_base_registers;
-        state.next_slot = saved_next_slot;
+        self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
 
         try self.pushScope();
         errdefer self.popScope();
@@ -2046,7 +2074,7 @@ pub const Compiler = struct {
         self.popScope();
         if (then_registers != self.active_registers) return error.InvalidBytecode;
         self.patchJump(end_jump);
-        state.next_slot = saved_next_slot;
+        self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
     }
 
     fn compileAnd(
@@ -2376,14 +2404,6 @@ pub const Compiler = struct {
 
     fn patchJump(self: *Compiler, index: usize) void {
         self.instructions.items[index].bx = @intCast(self.instructions.items.len);
-    }
-
-    fn nextTemp(self: *Compiler, comptime prefix: []const u8) ![]const u8 {
-        // i need to have my string interpolation like this look at him
-        const name = try std.fmt.allocPrint(self.alloc, "{s}_{d}", .{ prefix, self.temp_counter });
-        try self.temp_names.append(self.alloc, name);
-        self.temp_counter += 1;
-        return name;
     }
 
     fn maybeFoldConstBinary(self: *Compiler, b: anytype) !bool {
