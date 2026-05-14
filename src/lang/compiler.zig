@@ -145,6 +145,15 @@ pub const Compiler = struct {
         }
     };
 
+    const Temps = struct {
+        pipe: usize = 0,
+        loop_result: usize = 0,
+        match_subject: usize = 0,
+        bind: usize = 0,
+        match_temp: usize = 0,
+        struct_desc: usize = 0,
+    };
+
     vm: *VM,
     comp_vm: *VM, // separate reference for compexpr execution during compilation
     alloc: std.mem.Allocator,
@@ -152,8 +161,7 @@ pub const Compiler = struct {
     instructions: std.ArrayList(Instruction),
     functions: std.ArrayList(FunctionState),
     slot_allocators: std.ArrayList(LocalSlot),
-    temp_counter: usize = 0,
-    temp_names: std.ArrayList([]u8),
+    temps: Temps = .{},
     /// flat list of break jump instruction indices for all enclosing inline loops
     /// each loop tracks its start index in this list; breaks append to it
     /// when a loop ends, it patches all jumps from its start index and shrinks the list
@@ -179,7 +187,6 @@ pub const Compiler = struct {
             .functions = try std.ArrayList(FunctionState).initCapacity(vm.runtime.alloc, 4),
             .slot_allocators = try std.ArrayList(LocalSlot).initCapacity(vm.runtime.alloc, 4),
             .spans = try std.ArrayList(ast.Span).initCapacity(vm.runtime.alloc, 32),
-            .temp_names = try std.ArrayList([]u8).initCapacity(vm.runtime.alloc, 16),
             .break_jumps = try std.ArrayList(usize).initCapacity(vm.runtime.alloc, 16),
             .loop_result_regs = try std.ArrayList(usize).initCapacity(vm.runtime.alloc, 8),
             .test_suite_names = try std.ArrayList([]const u8).initCapacity(vm.runtime.alloc, 4),
@@ -188,13 +195,11 @@ pub const Compiler = struct {
 
     fn deinit(self: *Compiler) void {
         // comp_vm is just a reference to vm, so its not deinitted
-        for (self.temp_names.items) |name| self.alloc.free(name);
         for (self.functions.items) |*state| state.deinit(self.alloc);
         self.functions.deinit(self.alloc);
         self.slot_allocators.deinit(self.alloc);
         self.instructions.deinit(self.alloc);
         self.spans.deinit(self.alloc);
-        self.temp_names.deinit(self.alloc);
         self.break_jumps.deinit(self.alloc);
         self.loop_result_regs.deinit(self.alloc);
         self.test_suite_names.deinit(self.alloc);
@@ -660,14 +665,15 @@ pub const Compiler = struct {
     }
 
     fn compilePipeAtTop(self: *Compiler, right: *const Node) InternalLowerError!void {
-        const tmp_name = try std.fmt.allocPrint(self.alloc, "__pipe_tmp_{d}", .{self.temp_counter});
-        self.temp_counter += 1;
-        try self.temp_names.append(self.alloc, tmp_name);
+        const tmp_name = try std.fmt.allocPrint(self.alloc, "__pipe_tmp_{d}", .{self.temps.pipe});
+        defer self.alloc.free(tmp_name);
+        self.temps.pipe += 1;
         const tmp_atom = try self.vm.internAtom(tmp_name);
         try self.emit(.store_global, tmp_atom);
+        const ident_name = try std.fmt.allocPrint(self.alloc, "__pipe_tmp_{d}", .{self.temps.pipe - 1});
         const left_node = Node{
             .span = self.active_span,
-            .expr = .{ .ident = tmp_name },
+            .expr = .{ .ident = ident_name },
         };
         try self.compilePipe(&left_node, right);
     }
@@ -1522,9 +1528,9 @@ pub const Compiler = struct {
         param_count: usize,
         loop_sym: revo.AtomID,
     ) InternalLowerError!void {
-        const result_name = try std.fmt.allocPrint(self.alloc, "__loop_result_{d}", .{self.temp_counter});
-        self.temp_counter += 1;
-        try self.temp_names.append(self.alloc, result_name);
+        const result_name = try std.fmt.allocPrint(self.alloc, "__loop_result_{d}", .{self.temps.loop_result});
+        defer self.alloc.free(result_name);
+        self.temps.loop_result += 1;
         const result_sym = try self.vm.internAtom(result_name);
 
         if (param_count > 0) {
@@ -1626,9 +1632,9 @@ pub const Compiler = struct {
             self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
         }
 
-        const subject_name = try std.fmt.allocPrint(self.alloc, "__match_subject_{d}", .{self.temp_counter});
-        self.temp_counter += 1;
-        try self.temp_names.append(self.alloc, subject_name);
+        const subject_name = try std.fmt.allocPrint(self.alloc, "__match_subject_{d}", .{self.temps.match_subject});
+        defer self.alloc.free(subject_name);
+        self.temps.match_subject += 1;
         const subject_slot = try self.declareLocal(subject_name, false);
         try self.compile(subject, true);
         self.markLocalInitialized(subject_slot);
@@ -1772,9 +1778,9 @@ pub const Compiler = struct {
                         .tuple_pattern => {
                             try self.emitStorageLoad(source);
                             try self.emit(.tuple_get_const, idx);
-                            const nested_name = try std.fmt.allocPrint(self.alloc, "__bind_{d}", .{self.temp_counter});
-                            self.temp_counter += 1;
-                            try self.temp_names.append(self.alloc, nested_name);
+                            const nested_name = try std.fmt.allocPrint(self.alloc, "__bind_{d}", .{self.temps.bind});
+                            defer self.alloc.free(nested_name);
+                            self.temps.bind += 1;
                             const nested_slot = try self.declareLocal(nested_name, false);
                             self.markLocalInitialized(nested_slot);
                             try self.emit(.bind_local, nested_slot);
@@ -1824,9 +1830,9 @@ pub const Compiler = struct {
                     const depth_before = self.active_registers;
                     try self.emitStorageLoad(subject);
                     try self.emit(.tuple_get_const, idx);
-                    const nested_name = try std.fmt.allocPrint(self.alloc, "__match_{d}", .{self.temp_counter});
-                    self.temp_counter += 1;
-                    try self.temp_names.append(self.alloc, nested_name);
+                    const nested_name = try std.fmt.allocPrint(self.alloc, "__match_{d}", .{self.temps.match_temp});
+                    defer self.alloc.free(nested_name);
+                    self.temps.match_temp += 1;
                     const nested_slot = try self.declareLocal(nested_name, false);
                     self.markLocalInitialized(nested_slot);
                     try self.emit(.bind_local, nested_slot);
@@ -1934,9 +1940,9 @@ pub const Compiler = struct {
 
         try self.emit(.table_new, 0);
         try self.duplicateRegister();
-        const descriptor_name = try std.fmt.allocPrint(self.alloc, "__struct_desc_{d}", .{self.temp_counter});
-        self.temp_counter += 1;
-        try self.temp_names.append(self.alloc, descriptor_name);
+        const descriptor_name = try std.fmt.allocPrint(self.alloc, "__struct_desc_{d}", .{self.temps.struct_desc});
+        defer self.alloc.free(descriptor_name);
+        self.temps.struct_desc += 1;
         const descriptor_sym = try self.vm.internAtom(descriptor_name);
         try self.emit(.store_global, descriptor_sym);
         try self.releaseRegister();
