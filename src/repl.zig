@@ -20,7 +20,7 @@ const bestline_c = if (backend == .bestline) @cImport({
     @cInclude("bestline.h");
 }) else struct {};
 
-const signal_c = @cImport(@cInclude("signal.h"));
+const signal_c = if (backend != .none) @cImport(@cInclude("signal.h")) else struct {};
 const libc = @cImport(@cInclude("stdlib.h"));
 const main = @import("main.zig");
 
@@ -75,9 +75,8 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
 
     std.debug.print("revo " ++ build_options.version ++ " -- repl ({s} backend)\ntype :q to exit, :clear to reset session\n", .{@tagName(backend)});
 
-    if (OS != .wasi) _ = signal_c.signal(signal_c.SIGINT, @ptrCast(&sigintHandler));
-    defer _ = if (OS != .wasi)
-        signal_c.signal(signal_c.SIGINT, @ptrFromInt(0));
+    const signal_was_set = backend != .none and OS != .wasi;
+    if (signal_was_set) _ = signal_c.signal(signal_c.SIGINT, @ptrCast(&sigintHandler));
 
     var source_acc = try std.ArrayList(u8).initCapacity(gpa, 256);
     defer source_acc.deinit(gpa);
@@ -151,5 +150,6 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
         source_acc.clearRetainingCapacity();
     }
 
+    if (signal_was_set) _ = signal_c.signal(signal_c.SIGINT, @ptrFromInt(0));
     std.debug.print("goodbye\n", .{});
 }

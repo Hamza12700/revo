@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const revo = @import("../root.zig");
 const root = @import("root.zig");
 const meta = @import("meta.zig");
@@ -243,7 +244,14 @@ fn exists_fn(args: []const Data, vm: *VM) !NativeResult {
 /// creates a directory, using default permissions when omitted
 fn mkdir_fn(args: []const Data, vm: *VM) !NativeResult {
     const path = vm.stringValue(args[0].string);
-    const permissions = if (args.len > 1) parsePermissions(vm, args[1]) catch return try NativeResult.Err(vm, "InvalidPermissions") else .default_dir;
+    const permissions: File.Permissions = if (args.len > 1)
+        parsePermissions(vm, args[1]) catch return try NativeResult.Err(vm, "InvalidPermissions")
+    else if (builtin.target.os.tag == .windows)
+        // windows doesn't have a sepaarte directory perm
+        @as(File.Permissions, @enumFromInt(0))
+    else
+        .default_dir;
+
     Dir.cwd().createDir(vm.runtime.io, path, permissions) catch |err| {
         return try NativeResult.Err(vm, mapIOError(err));
     };

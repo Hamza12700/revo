@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const revo = @import("revo");
 const root = @import("root.zig");
 
@@ -261,7 +262,8 @@ pub fn deinit(self: *VM) void {
     self.loading_modules.deinit();
 
     for (self.loaded_extensions.items) |*lib| {
-        lib.close();
+        if (builtin.target.os.tag != .windows)
+            lib.close();
     }
     self.loaded_extensions.deinit(self.runtime.alloc);
 }

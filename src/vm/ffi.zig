@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const root = @import("root.zig");
 const revo = @import("revo");
 const VM_mod = @import("VM.zig");
@@ -132,6 +133,11 @@ pub export fn revo_table_set(vm: *anyopaque, table_id: u64, key: CRevoData, valu
 }
 
 pub fn loadC(vm: *VM_mod.VM, lib_path: []const u8) ![]functions.CFunction {
+    if (builtin.target.os.tag == .windows) {
+        std.debug.print("error: dynamic library loading is not supported on windows\n", .{});
+        return error.WindowsNotSupported;
+    }
+
     var lib = try std.DynLib.open(lib_path);
     // defer lib.close();
 
