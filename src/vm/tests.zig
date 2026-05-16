@@ -5,6 +5,7 @@ const revo = @import("revo");
 const Data = revo.Data;
 
 const VM = @import("VM.zig").VM;
+const Scheduler = revo.vm.Scheduler;
 const vt = @import("testing.zig");
 
 fn trigger_gc(vm: *VM) void {
@@ -14,6 +15,10 @@ fn trigger_gc(vm: *VM) void {
 
 fn return_one(_: []const Data, _: *VM) revo.functions.NativeError!Data {
     return Data.new.num(1);
+}
+
+fn fakeIoReady(_: *VM, _: *Scheduler.WaitEntry, _: i16) anyerror!Scheduler.IoDispatchResult {
+    return .{};
 }
 
 test "vm join returns dead fiber result" {
@@ -117,6 +122,41 @@ test "vm channel handoff wakes blocked receiver" {
 
     try testing.expectEqual(@as(VM.Fiber.State, .ready), vm.sched.fibers.items[1].state);
     try testing.expectEqual(@as(f64, 99), vm.sched.fibers.items[1].slots.items[0].number);
+}
+
+test "scheduler generic park wake resumes parked fiber" {
+    var vm = try VM.init(vt.runtime());
+    defer vm.deinit();
+
+    const child = try VM.Fiber.init(vm.runtime.alloc, 1, &.{});
+    try vm.sched.fibers.append(vm.runtime.alloc, child);
+    try vm.sched.fibers.items[1].slots.resize(vm.runtime.alloc, 1);
+    vm.sched.fibers.items[1].slots.items[0] = revo.core_atoms.data(.missing);
+
+    vm.sched.current_fiber = 1;
+    try vm.sched.parkCurrentForIo(
+        vm.runtime.alloc,
+        7,
+        .read,
+        0,
+        fakeIoReady,
+        null,
+    );
+
+    try testing.expectEqual(@as(VM.Fiber.State, .waiting), vm.sched.fibers.items[1].state);
+    try testing.expect(vm.sched.fibers.items[1].wait == .io);
+    const io_wait = switch (vm.sched.fibers.items[1].wait) {
+        .io => |wait| wait,
+        else => unreachable,
+    };
+    try testing.expectEqual(@as(u64, 7), io_wait.wait_id);
+    try testing.expectEqual(@as(usize, 1), vm.sched.io_waiters.items.len);
+    try testing.expectEqual(@as(u64, 7), vm.sched.io_waiters.items[0].wait_id);
+
+    try vm.sched.wakeFiber(vm.runtime.alloc, 1, Data.new.num(13));
+
+    try testing.expectEqual(@as(VM.Fiber.State, .ready), vm.sched.fibers.items[1].state);
+    try testing.expectEqual(@as(f64, 13), vm.sched.fibers.items[1].slots.items[1].number);
 }
 
 test "vm channel buffered send then recv" {

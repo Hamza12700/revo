@@ -19,6 +19,7 @@ pub const ChannelID = @import("VM.zig").ChannelID;
 pub const ConstantID = @import("VM.zig").ConstantID;
 pub const GlobalID = @import("VM.zig").GlobalID;
 pub const ProgramCounter = @import("VM.zig").ProgramCounter;
+pub const Scheduler = @import("scheduler.zig").Scheduler;
 pub const EvalErrorKind = @import("debug.zig").EvalErrorKind;
 pub const EvalFailure = @import("debug.zig").EvalFailure;
 pub const EvalResult = @import("debug.zig").EvalResult;

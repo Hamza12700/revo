@@ -1563,8 +1563,7 @@ test "struct descriptors stay off globals" {
     var vm = try VM.init(t.runtime());
     defer vm.deinit();
 
-    const built = try lang.build(&vm, .{
-        .text =
+    const built = try lang.build(&vm, .{ .text =
         \\ struct User { name: string = "hi" }
     }, .{});
     try std.testing.expect(built == .ok);
@@ -2151,9 +2150,9 @@ test "fn name(params) multiple named functions" {
         \\ mul(add(2, 3), 4)
     , 20);
 }
-// 
+//
 // shared binding gotcha doc
-// 
+//
 test "closure captured in loop" {
     if (true) return error.SkipZigTest;
     try t.top_number(

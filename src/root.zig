@@ -1,7 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 pub const pretty = @import("./pretty.zig");
-fn asdf() void {}
+pub const std_net = @import("./std/net.zig");
+pub const async_backend = @import("./runtime/async_backend.zig");
+pub const async_backend_posix = @import("./runtime/async_backend_posix.zig");
 
 pub const Runtime = struct {
     alloc: std.mem.Allocator,
@@ -11,6 +13,7 @@ pub const Runtime = struct {
     stdout: std.Io.File = undefined,
     stderr: std.Io.File = undefined,
     vm: ?*VM = null,
+    async_backend: ?*async_backend.AsyncBackend = null,
 
     /// ret: a new runtime with its own vm
     pub fn init(alloc: std.mem.Allocator, io: std.Io, argv: []const [:0]const u8) !Runtime {
@@ -20,6 +23,7 @@ pub const Runtime = struct {
             .alloc = alloc,
             .io = io,
             .vm = vm_ptr,
+            .async_backend = null,
         };
     }
 
@@ -178,6 +182,16 @@ pub const core_atoms = enum(AtomID) {
     __tostring,
     __debug,
     __call,
+    SocketClosed,
+    InvalidAddress,
+    ConnectionFailed,
+    SocketSetupFailed,
+    NotServerSocket,
+    AcceptFailed,
+    CannotSendOnServer,
+    SendFailed,
+    CannotRecvOnServer,
+    RecvFailed,
 
     pub const lastFalse = @intFromEnum(@This().false);
 

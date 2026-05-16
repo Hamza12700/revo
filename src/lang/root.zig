@@ -45,7 +45,6 @@ pub const TokenType = lexer.TokenType;
 pub const LexError = lexer.LexError;
 pub const LexResult = lexer.LexResult;
 
-
 test {
     _ = @import("ast.zig");
     _ = @import("compiler.zig");

@@ -130,8 +130,8 @@ chan(5)       # buffer of 5
 ### - `send(chan: tuple, value: any) -> atom`
 sends value to channel
 
-### - `recv(chan: tuple) -> any`
-receives value from channel, parks if empty
+### - `socket:recv(opts: table) -> string`
+receives data according to opts.mode (:read_some | :read_all | :read_line)
 
 ### - `sleep(ms: number) -> parked`
 sleeps current fiber for given milliseconds
@@ -382,8 +382,8 @@ accepts an incoming client connection on a server socket
 ### - `socket:send(data: string) -> number`
 sends data over the socket, returns number of bytes sent
 
-### - `socket:recv([max_bytes: number]) -> string`
-receives data from the socket, returns data as string
+### - `socket:recv(opts: table) -> string`
+receives data according to opts.mode (:read_some | :read_all | :read_line)
 
 ### - `socket:close() -> atom`
 closes the socket

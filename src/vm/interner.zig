@@ -4,7 +4,6 @@ const lang = revo.lang;
 const lang_testing = revo.lang.testing;
 const revo = @import("revo");
 
-
 const VM = revo.VM;
 
 const memory = @import("memory.zig");

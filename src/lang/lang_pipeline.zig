@@ -20,11 +20,12 @@ pub fn build(vm: *VM, source: Source, opts: BuildOptions) !BuildResult {
         .ok => |ok| ok,
         .err => |err| return err,
     };
-    return switch (try lower(vm, expanded, .{
+    const lower_result = try lower(vm, expanded, .{
         .install_debug_info = opts.install_debug_info,
         .source = source,
         .test_mode = opts.test_mode,
-    })) {
+    });
+    return switch (lower_result) {
         .ok => |artifact| .{ .ok = artifact },
         .err => |failure| .{ .err = .{ .lower = failure } },
     };

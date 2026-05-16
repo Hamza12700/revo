@@ -2,7 +2,6 @@ const std = @import("std");
 
 const revo = @import("revo");
 
-
 const memory = revo.memory;
 const Data = revo.Data;
 const testing = revo.lang.testing;

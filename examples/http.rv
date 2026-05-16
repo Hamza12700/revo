@@ -1,0 +1,21 @@
+# tiny http server
+#
+# run it, then open http://localhost:6768/
+const response = "HTTP/1.1 200 OK
+Connection: close
+Content-Type: text/plain
+Content-Length: 13
+
+hello, world!"
+const server = net.listen(6768)?
+print!("http server on localhost:%d...", server.port)
+
+fn serve(peer) do
+  peer:send(response)?
+  peer:close()?
+end
+
+while :true do
+  let conn = server:accept()?
+  spawn serve(conn)
+end

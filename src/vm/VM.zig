@@ -39,9 +39,6 @@ pub const DebugInfo = struct {
     source_name: []const u8,
 };
 
-/// this is a struct for easier field access and always-correct id set.
-/// values end up having no overhead and being just integers
-///
 /// another way to do so would be an enum(AtomID), and making sure they always start initialization at 0
 /// not sure about that! may switch over to that model later
 ///
@@ -52,12 +49,17 @@ pub const Fiber = struct {
         id: root.functions.UpvalueID,
     };
 
+    pub const WaitKey = struct {
+        wait_id: u64,
+    };
+
     pub const WaitKind = union(enum) {
         none,
         join: FiberID,
         send: ChannelID,
         recv: ChannelID,
         sleep,
+        io: WaitKey,
     };
 
     id: FiberID,
@@ -169,6 +171,8 @@ pub fn init(runtime: revo.Runtime) !VM {
         .module_dir = null,
         .loaded_extensions = try .initCapacity(runtime.alloc, 0),
     };
+    // wire scheduler io poll to net poll as default; runtime may replace this
+    vm.sched.io_poll = revo.std_net.pollIoWaiters;
     try vm.sched.fibers.append(runtime.alloc, .{
         .id = 0,
         .pc = 0,
@@ -196,7 +200,24 @@ pub fn init(runtime: revo.Runtime) !VM {
     while (it.next()) |entry| {
         try vm.bootstrap_globals.put(entry.key_ptr.*, entry.value_ptr.*);
     }
+
+    // leave async backend nil unless explicitly configured by runtime host
+    vm.runtime.async_backend = null;
+    vm.sched.io_poll = revo.std_net.pollIoWaiters;
+
     return vm;
+}
+
+// combined poll fn that calls net poll an async backend poll
+fn default_io_poll(vm: *VM, timeout_ms: i32) anyerror!bool {
+    var woke = try revo.std_net.pollIoWaiters(vm, timeout_ms);
+    if (vm.runtime.async_backend) |bb| {
+        if (bb.data != null) {
+            const backend_woke = try revo.async_backend_posix.poll_all(vm, 0);
+            woke = woke or backend_woke;
+        }
+    }
+    return woke;
 }
 
 /// TODO: use @sizeOf everywhere at callsite because this is all over the place
@@ -719,11 +740,26 @@ pub fn runReport(self: *VM) !EvalResult {
             return .{ .err = failure };
         }
         try self.sched.wakeDueSleepers(self.runtime.alloc, self.schedNowMonotonicNs());
-
         const has_sleepers = self.sched.sleepers.items.len > 0;
+        const has_io_waiters = self.sched.io_waiters.items.len > 0;
         const has_waiting = self.sched.waiting_cnt > 0;
 
         if (!has_sleepers and !has_waiting) break;
+
+        if (has_io_waiters or (self.runtime.async_backend != null and has_waiting)) {
+            const timeout_ms: i32 = if (self.sched.nextSleepDelayNs(self.schedNowMonotonicNs())) |delay_ns|
+                @as(i32, @intCast(@min(delay_ns / std.time.ns_per_ms, @as(u64, std.math.maxInt(i32)))))
+            else
+                -1;
+            // call configured io poll helper to wait for fd events
+            const io_poll = self.sched.io_poll orelse {
+                try self.setRuntimeMessage("io poll is not configured");
+                return .{ .err = self.evalFailure(error.Panic) };
+            };
+            _ = io_poll(self, timeout_ms) catch return .{ .err = self.evalFailure(error.Panic) };
+            try self.sched.wakeDueSleepers(self.runtime.alloc, self.schedNowMonotonicNs());
+            continue;
+        }
 
         if (has_sleepers) {
             self.schedSleepUntilNextTimer();
@@ -1646,10 +1682,10 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.writeRegister(instr.a, target.result);
             } else {
                 try target.waiters.append(self.runtime.alloc, self.sched.current_fiber);
-                self.currentFiber().parked_result_slot = try self.absoluteRegisterIndex(instr.a);
-                self.sched.setFiberState(self.sched.current_fiber, .waiting);
-                self.currentFiber().wait = .{ .join = target_id };
-                self.currentFiber().running = false;
+                self.sched.parkCurrentWithResult(
+                    .{ .join = target_id },
+                    try self.absoluteRegisterIndex(instr.a),
+                );
             }
         },
         .yield => {

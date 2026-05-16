@@ -4,7 +4,7 @@ end
 
 # print(a)
 
-const x = do
+const x = comp do
 	let res = read():unwrap()
 		|> fn(c) c:upper()
 	match res

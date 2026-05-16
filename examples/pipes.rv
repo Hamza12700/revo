@@ -85,7 +85,3 @@ let one = t
 
 t |> :inc
 assert_eq(t.counter, 6)
-
-# wont need a new pipe token
-t |>~ :might_err
-

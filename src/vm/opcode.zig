@@ -103,8 +103,8 @@ pub const Opcode = enum(u8) {
     /// bx = 1: dont propagate
     unwrap_result,
     /// TODO: maybe merge these two
-    jump_if_not_nil_and_not_err,    // if not nil and not (:err, ...), jump to bx
-    jump_if_err,                    // if (:err, ...), jump to bx
+    jump_if_not_nil_and_not_err, // if not nil and not (:err, ...), jump to bx
+    jump_if_err, // if (:err, ...), jump to bx
 };
 
 pub const Instruction = struct {
