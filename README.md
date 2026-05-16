@@ -7,6 +7,7 @@
 [homepage & docs](https://gills.pages.dev/revo)
 | [github](https://github.com/if-not-nil/revo)
 | [learn](https://gills.pages.dev/revo/basics)
+| [chat & discuss](https://discord.com/invite/XzGWh7TX59)
 
 </div>
 
