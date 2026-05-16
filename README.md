@@ -118,7 +118,7 @@ revo --version
 
 ```bash
 git clone https://github.com/if-not-nil/revo && cd revo
-zig build -Doptimize=ReleaseFast -Drepl=none
+zig build -Doptimize=ReleaseFast
 
 mkdir "C:/tools/revo/bin"
 copy ./zig-out/bin/revo C:/tools/revo/bin
