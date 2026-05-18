@@ -3,7 +3,7 @@
 # everything is an expression! errors are values and concurrency is built in
 
 fn the_basics() do
-  print("=== the basics")
+  print("the basics")
 
   const n = 42
   const f = 3.14
@@ -50,7 +50,7 @@ fn the_basics() do
 end
 
 fn functions() do
-  print("\n=== functions")
+  print("\nfunctions")
 
   # fn name(args) body: top-level function declaration
   fn add(a, b) a + b
@@ -87,9 +87,9 @@ fn functions() do
   print(ctr(), ctr(), ctr())
 end
 
-# === control flow: if/else, match, reduce, loop ===
+# control flow: if/else, match, reduce, loop
 fn control_flow() do
-  print("\n=== control flow")
+  print("\ncontrol flow")
 
   # if/else is an expression: returns value of chosen branch
   const branch = if 1 < 2 "yes" else "no"
@@ -121,9 +121,9 @@ fn control_flow() do
   print(loop_result)
 end
 
-# === tuples: do-end blocks as values, destructuring ===
+# tuples: do-end blocks as values, destructuring
 fn tuples() do
-  print("\n=== tuples")
+  print("\ntuples")
 
   # do-end blocks evaluate to their last expression
   const block_result = do
@@ -148,9 +148,9 @@ fn tuples() do
   print(a, b, c, d)
 end
 
-# === pipes: |> passes lhs as first arg to rhs ===
+# pipes: value |> fn passes value as first arg
 fn pipes() do
-  print("\n=== pipes")
+  print("\npipes")
 
   # value |> fn transforms the value
   const p1 = 10 |> fn(x) x + 5
@@ -174,9 +174,9 @@ fn pipes() do
   print(chain)
 end
 
-# === error handling: result types, orelse, ok?, err? ===
+# error handling: result types, orelse, ok?, err?
 fn error_handling() do
-  print("\n=== error handling")
+  print("\nerror handling")
 
   # functions return (:ok, value) or (:err, error_atom) instead of exceptions
   fn safe_div(a, b) do
@@ -201,9 +201,9 @@ fn error_handling() do
   print(result, fallback, is_ok, is_err)
 end
 
-# === structs: named types with fields and methods ===
+# structs: named types with fields and methods
 fn structs() do
-  print("\n=== structs")
+  print("\nstructs")
 
   # struct defines a type with fields and methods
   struct Point {
@@ -235,9 +235,9 @@ fn structs() do
   print(c:val())
 end
 
-# === methods: calling with :syntax like lua ===
+# methods: calling with :syntax like lua
 fn methods() do
-  print("\n=== methods")
+  print("\nmethods")
 
   # call methods with : syntax - obj:method(args) passes obj as first arg
   # same as obj.method(obj, args)
@@ -263,7 +263,7 @@ end
 
 # fibers: super lightweight concurrency with spawn/join and channels
 fn fibers() do
-  print("\n=== fibers")
+  print("\nfibers")
 
   # spawn runs a function in a new fiber: runs concurrently
   const f1 = spawn fn() reduce((1,2,3), fn(a,b) a + b, 0)
@@ -281,9 +281,9 @@ fn fibers() do
   print(recv(ch))
 end
 
-# nonblocking io: looks blocking but isn't
+# nonblocking io: looks blocking but runs concurrently
 fn nonblocking() do
-  print("\n=== nonblocking io")
+  print("\nnonblocking io")
 
   # revo's async io looks like blocking code but parks the fiber instead
   # this lets you write synchronous-looking code that runs concurrently
@@ -332,7 +332,7 @@ end
 
 # metatables: customize table behavior with metamethods
 fn metatables() do
-  print("\n=== metatables")
+  print("\nmetatables")
 
   # set a metable on a table to customize behavior
   const VecMT = {
@@ -375,9 +375,9 @@ fn metatables() do
   print(twice(21))
 end
 
-# === macros: compile-time code transformation ===
+# macros: compile-time code transformation
 fn macros() do
-  print("\n=== macros")
+  print("\nmacros")
 
   # macro defines a syntax transformation at compile time
   const double! = macro `(%x:expr)` `%x * 2`
@@ -388,9 +388,9 @@ fn macros() do
   print(twice!(1, 2))
 end
 
-# === proc macros: compile-time procedural code generation ===
+# proc macros: compile-time procedural code generation
 fn proc_macros() do
-  print("\n=== proc macros")
+  print("\nproc macros")
 
   # proc is a compile-time function that receives an AST iterator
   # it can generate new code at compile time
@@ -399,9 +399,9 @@ fn proc_macros() do
   print("see examples/proc.rv for proc macro examples")
 end
 
-# === comp: compile-time evaluation ===
+# comp: compile-time evaluation
 fn comp_time() do
-  print("\n=== comp")
+  print("\ncomp")
 
   # comp evaluates the expression at compile time and embeds the result
   const config = comp ({
@@ -413,9 +413,9 @@ fn comp_time() do
   print(config.version, config.env, config.features)
 end
 
-# === stdlib: standard library functions ===
+# stdlib: standard library functions
 fn stdlib() do
-  print("\n=== stdlib")
+  print("\nstdlib")
 
   # conversion functions
   print(tonumber("42"), tonumber(3.14))
@@ -455,9 +455,9 @@ fn stdlib() do
   print(t2)
 end
 
-# === modules: import and share code ===
+# modules: import and share code
 fn modules() do
-  print("\n=== modules")
+  print("\nmodules")
 
   # import loads a module file - the last expression becomes the module value
   # modules are cached - same path returns the same table
@@ -475,9 +475,9 @@ fn modules() do
   print("import loads .rv files, see examples/lib.rv")
 end
 
-# test are blocks that get compiled and ran only with --test flag
+# tests: compile and run only with --test flag
 fn run_tests() do
-  print("\n=== tests")
+  print("\ntests")
 
   fn add(a, b) a + b
 
@@ -522,7 +522,7 @@ fn main() do
   modules()
   run_tests()
 
-  print("\n=== done ===")
+  print("\ndone")
 end
 
 main()
