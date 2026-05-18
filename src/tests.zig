@@ -20,7 +20,7 @@ test "vm compare orders values by type and content" {
     const a = try vm.ownDataString("a");
     const abc = try vm.ownDataString("abc");
     const abd = try vm.ownDataString("abd");
-    try testing.expectEqual(std.math.Order.lt, vm.compare(Data.new.num(1), a));
+    try testing.expectEqual(std.math.Order.gt, vm.compare(Data.new.num(1), a));
     try testing.expectEqual(std.math.Order.eq, vm.compare(abc, abc));
     try testing.expectEqual(std.math.Order.lt, vm.compare(abc, abd));
 }

@@ -13,7 +13,6 @@
 ///    - numbers
 ///    - strings: lexicographic byte-order comparison
 ///    - tuples: recursive (for nested tuples) lexicographic element-wise comparison. length breaks ties
-
 const std = @import("std");
 const revo = @import("revo");
 const Data = @import("memory.zig").Data;

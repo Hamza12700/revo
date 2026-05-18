@@ -5,17 +5,6 @@
 #
 # this makes them similar to monads
 ##
-fn bind(trolley, track) match trolley
-  | (:ok, ok) track(ok)
-  | (:err, e) (:err, e)
-
-fn or_else(trolley, track) match trolley
-  | (:err, e) track(e)
-  | (:ok, ok) (:ok, ok)
-
-fn or_else_msg(trolley, track) match trolley
-  | (:err, e, msg) track(e, msg)
-  | x x
 
 let a = {inner = 21, mutate = fn(self) self.inner *= 2}
 # explicit pipe
@@ -25,10 +14,4 @@ a |> fn(c) c:mutate()
     print("got", c)
     (:ok, c)
   end
-  |> bind(fn(a) a * 2)
   |> inspect
-
-# placeholder pipe - using _ in method call
-print("Testing placeholder _:mutate():")
-a |> _:mutate()
-  |> print

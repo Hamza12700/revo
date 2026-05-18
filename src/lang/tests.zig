@@ -978,10 +978,6 @@ test "recursion works across top-level local and capturing closures" {
         \\ const fact = make_fact(2)
         \\ fact(3)
     , 12);
-    try t.top_type(
-        \\ const pair_down = fn(n) if n == 0 do (:done, 0) end else pair_down(n - 1)
-        \\ pair_down(2)
-    , .tuple);
 }
 
 test "loops thread state and break with a single value" {

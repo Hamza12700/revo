@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const revo = @import("../root.zig");
+const revo = @import("revo");
 const lang = @import("./root.zig");
 const Data = revo.Data;
 
