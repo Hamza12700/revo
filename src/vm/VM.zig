@@ -442,8 +442,42 @@ pub fn writeRegister(self: *VM, reg: opcode.Register, value: Data) !void {
     self.currentFiber().slots.items[slot] = value;
 }
 
+/// call when 0 <= slot < slots.len
+pub inline fn readRegisterUnsafe(self: *VM, slot: usize) Data {
+    return self.currentFiber().slots.items[slot];
+}
+
+/// call when slot is valid and capacity is enough
+pub inline fn writeRegisterUnsafe(self: *VM, slot: usize, value: Data) void {
+    self.currentFiber().slots.items[slot] = value;
+}
+
+/// avoid recomputing currentFrame() repeatedly
+/// callers should cache `base = frame.base`
+pub inline fn readRegisterFast(self: *VM, base: usize, reg: opcode.Register) Data {
+    const slot = base + reg;
+    if (slot >= self.currentFiber().slots.items.len) return revo.core_atoms.data(.missing);
+    return self.readRegisterUnsafe(slot);
+}
+
+/// avoid recomputing currentFrame() repeatedly
+/// callers should cache `base = frame.base`
+pub inline fn writeRegisterFast(self: *VM, base: usize, reg: opcode.Register, value: Data) !void {
+    const slot = base + reg;
+    try self.ensureAbsoluteSlot(slot);
+    self.writeRegisterUnsafe(slot, value);
+}
+
 fn copyRegister(self: *VM, dst: opcode.Register, src: opcode.Register) !void {
-    try self.writeRegister(dst, try self.readRegister(src));
+    const dst_slot = try self.absoluteRegisterIndex(dst);
+    const src_slot = try self.absoluteRegisterIndex(src);
+    if (src_slot < self.currentFiber().slots.items.len) {
+        try self.ensureAbsoluteSlot(dst_slot);
+        self.currentFiber().slots.items[dst_slot] = self.currentFiber().slots.items[src_slot];
+    } else {
+        try self.ensureAbsoluteSlot(dst_slot);
+        self.currentFiber().slots.items[dst_slot] = revo.core_atoms.data(.missing);
+    }
 }
 
 pub fn internAtom(self: *VM, name: []const u8) !mem.AtomID {
@@ -960,7 +994,8 @@ fn writeAbsoluteSlot(self: *VM, slot: usize, value: Data) !void {
 fn callRegister(self: *VM, instr: Instruction) EvalError!void {
     self.perf.call_ops += 1;
     const frame = try self.currentFrame();
-    const callee_slot = frame.base + instr.a;
+    const base = frame.base;
+    const callee_slot = base + instr.a;
     const argc: usize = instr.b;
     const callee = if (callee_slot < self.currentFiber().slots.items.len)
         self.currentFiber().slots.items[callee_slot]
@@ -977,7 +1012,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
             try self.ensureAbsoluteSlot(args_end);
             const args = self.currentFiber().slots.items[args_start..args_end];
             const result = try self.callFunctionParts(mm, callee, args);
-            try self.writeRegister(instr.c, result);
+            try self.writeRegisterFast(base, instr.c, result);
             return;
         }
 
@@ -993,7 +1028,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.ensureAbsoluteSlot(args_end);
                 const args = self.currentFiber().slots.items[args_start..args_end];
                 const result = try self.callFunctionParts(struct_new_fn, callee, args);
-                try self.writeRegister(instr.c, result);
+                try self.writeRegisterFast(base, instr.c, result);
                 return;
             }
         }
@@ -1035,7 +1070,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
             var c_result: revo.ffi.CRevoData = .{ .tag = 0, .value = 0 };
             f.fn_ptr(@ptrCast(self), argc, c_args.ptr, &c_result);
 
-            try self.writeRegister(instr.c, try c_result.toData(self));
+            try self.writeRegisterFast(base, instr.c, try c_result.toData(self));
         },
         .native => |f| {
             const args_start = callee_slot + 1;
@@ -1069,7 +1104,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
                 return error.Panic;
             };
             switch (result) {
-                .ok => |data| try self.writeRegister(instr.c, data),
+                .ok => |data| try self.writeRegisterFast(base, instr.c, data),
                 // maybe push err tpl here instead
                 .err => |err| {
                     switch (err) {
@@ -1092,7 +1127,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
                         .native_error => |native_err| return native_err,
                         .parked => {
                             self.currentFiber().parked_result_slot = try self.absoluteRegisterIndex(instr.c);
-                            try self.writeRegister(instr.c, revo.core_atoms.data(.missing));
+                            try self.writeRegisterFast(base, instr.c, revo.core_atoms.data(.missing));
                             return error.Parked;
                         },
                         .other => |msg| {
@@ -1276,7 +1311,14 @@ fn spawnRegister(self: *VM, instr: Instruction) EvalError!void {
         @memset(child.slots.items, revo.core_atoms.data(.missing));
     }
     for (0..argc) |idx| {
-        child.slots.items[idx] = try self.readRegister(instr.a + 1 + @as(opcode.Register, @intCast(idx)));
+        // this is safe
+        const src_reg = instr.a + 1 + @as(opcode.Register, @intCast(idx));
+        const src_slot = try self.absoluteRegisterIndex(src_reg);
+        if (src_slot < self.currentFiber().slots.items.len) {
+            child.slots.items[idx] = self.currentFiber().slots.items[src_slot];
+        } else {
+            child.slots.items[idx] = revo.core_atoms.data(.missing);
+        }
     }
     const child_closure_id = try self.detachClosureForFiber(closure_id);
     try child.frames.append(self.runtime.alloc, .{
@@ -1295,50 +1337,54 @@ fn spawnRegister(self: *VM, instr: Instruction) EvalError!void {
 
 fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
     // std.debug.print("{any}\n", .{instr});
+    const cur_frame = try self.currentFrame();
+    const base = cur_frame.base;
     switch (instr.op) {
         .move => try self.copyRegister(instr.a, instr.b),
-        .load_const => try self.writeRegister(instr.a, try self.getConstant(instr.bx)),
-        .load_nil => try self.writeRegister(instr.a, revo.core_atoms.data(.nil)),
-        .load_small_int => try self.writeRegister(instr.a, Data.new.num(@as(i64, @intCast(instr.bx)))),
+        .load_const => try self.writeRegisterFast(base, instr.a, try self.getConstant(instr.bx)),
+        .load_nil => try self.writeRegisterFast(base, instr.a, revo.core_atoms.data(.nil)),
+        .load_small_int => try self.writeRegisterFast(base, instr.a, Data.new.num(@as(i64, @intCast(instr.bx)))),
         .add => {
-            const lhs = try self.readRegister(instr.b);
-            const rhs = try self.readRegister(instr.c);
+            const lhs = self.readRegisterFast(base, instr.b);
+            const rhs = self.readRegisterFast(base, instr.c);
             const lnum = lhs.as_number() catch null;
             const rnum = rhs.as_number() catch null;
             if (lnum != null and rnum != null) {
-                try self.writeRegister(instr.a, Data.new.num(lnum.? + rnum.?));
+                try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? + rnum.?));
                 return;
             }
             if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__add))) |result| {
-                try self.writeRegister(instr.a, result);
+                try self.writeRegisterFast(base, instr.a, result);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot add {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
             return error.IncompatibleTypes;
         },
+
         .sub => {
-            const lhs = try self.readRegister(instr.b);
-            const rhs = try self.readRegister(instr.c);
+            const lhs = self.readRegisterFast(base, instr.b);
+            const rhs = self.readRegisterFast(base, instr.c);
             const lnum = lhs.as_number() catch null;
             const rnum = rhs.as_number() catch null;
             if (lnum != null and rnum != null) {
-                try self.writeRegister(instr.a, Data.new.num(lnum.? - rnum.?));
+                try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? - rnum.?));
                 return;
             }
             if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__sub))) |result| {
-                try self.writeRegister(instr.a, result);
+                try self.writeRegisterFast(base, instr.a, result);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot subtract {s} from {s}", .{ revo.std_lib.dataToString(rhs), revo.std_lib.dataToString(lhs) });
             return error.IncompatibleTypes;
         },
+
         .mul => {
-            const lhs = try self.readRegister(instr.b);
-            const rhs = try self.readRegister(instr.c);
+            const lhs = self.readRegisterFast(base, instr.b);
+            const rhs = self.readRegisterFast(base, instr.c);
             const lnum = lhs.as_number() catch null;
             const rnum = rhs.as_number() catch null;
             if (lnum != null and rnum != null) {
-                try self.writeRegister(instr.a, Data.new.num(lnum.? * rnum.?));
+                try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? * rnum.?));
                 return;
             }
             // String * number or number * string: repeat string
@@ -1352,7 +1398,7 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                     try buf.appendSlice(self.runtime.alloc, str);
                 }
                 const result_str = try self.adoptDataString(try buf.toOwnedSlice(self.runtime.alloc));
-                try self.writeRegister(instr.a, result_str);
+                try self.writeRegisterFast(base, instr.a, result_str);
                 return;
             }
             if (rhs == .string and lnum != null) {
@@ -1365,74 +1411,83 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                     try buf.appendSlice(self.runtime.alloc, str);
                 }
                 const result_str = try self.adoptDataString(try buf.toOwnedSlice(self.runtime.alloc));
-                try self.writeRegister(instr.a, result_str);
+                try self.writeRegisterFast(base, instr.a, result_str);
                 return;
             }
             if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__mul))) |result| {
-                try self.writeRegister(instr.a, result);
+                try self.writeRegisterFast(base, instr.a, result);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot multiply {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
             return error.IncompatibleTypes;
         },
+
         .div => {
-            const lhs = try self.readRegister(instr.b);
-            const rhs = try self.readRegister(instr.c);
+            const lhs = self.readRegisterFast(base, instr.b);
+            const rhs = self.readRegisterFast(base, instr.c);
             const lnum = lhs.as_number() catch null;
             const rnum = rhs.as_number() catch null;
             if (lnum != null and rnum != null) {
                 const rv = rnum.?;
                 if (rv == 0) return error.DivisionByZero;
-                try self.writeRegister(instr.a, Data.new.num(lnum.? / rv));
+                try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? / rv));
                 return;
             }
             if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__div))) |result| {
-                try self.writeRegister(instr.a, result);
+                try self.writeRegisterFast(base, instr.a, result);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot divide {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
             return error.IncompatibleTypes;
         },
+
         .mod => {
-            const lhs = try self.readRegister(instr.b);
-            const rhs = try self.readRegister(instr.c);
+            const lhs = self.readRegisterFast(base, instr.b);
+            const rhs = self.readRegisterFast(base, instr.c);
             const lnum = lhs.as_number() catch null;
             const rnum = rhs.as_number() catch null;
             if (lnum != null and rnum != null) {
                 const rv = rnum.?;
                 if (rv == 0) return error.DivisionByZero;
-                try self.writeRegister(instr.a, Data.new.num(@mod(lnum.?, rv)));
+                try self.writeRegisterFast(base, instr.a, Data.new.num(@mod(lnum.?, rv)));
                 return;
             }
             if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__mod))) |result| {
-                try self.writeRegister(instr.a, result);
+                try self.writeRegisterFast(base, instr.a, result);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot mod {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
             return error.IncompatibleTypes;
         },
+
         .negate => {
-            const v = try self.readRegister(instr.b);
+            const v = self.readRegisterFast(base, instr.b);
             if (v == .number) {
-                try self.writeRegister(instr.a, Data.new.num(-v.number));
+                try self.writeRegisterFast(base, instr.a, Data.new.num(-v.number));
                 return;
             }
             try self.setRuntimeMessageFmt("cannot negate {s}", .{revo.std_lib.dataToString(v)});
             return error.IncompatibleTypes;
         },
+
         inline .eq, .neq, .lt, .gt, .lte, .gte => |op| try compare_impl.eval(self, instr, op),
-        .@"and" => try self.writeRegister(
+        .@"and" => try self.writeRegisterFast(
+            base,
             instr.a,
-            Data.new.boolean(!revo.isFalse(try self.readRegister(instr.b)) and !revo.isFalse(try self.readRegister(instr.c))),
+            Data.new.boolean(!revo.isFalse(self.readRegisterFast(base, instr.b)) and !revo.isFalse(self.readRegisterFast(base, instr.c))),
         ),
-        .@"or" => try self.writeRegister(
+
+        .@"or" => try self.writeRegisterFast(
+            base,
             instr.a,
-            Data.new.boolean(!revo.isFalse(try self.readRegister(instr.b)) or !revo.isFalse(try self.readRegister(instr.c))),
+            Data.new.boolean(!revo.isFalse(self.readRegisterFast(base, instr.b)) or !revo.isFalse(self.readRegisterFast(base, instr.c))),
         ),
-        .not => try self.writeRegister(instr.a, Data.new.boolean(revo.isFalse(try self.readRegister(instr.b)))),
+
+        .not => try self.writeRegisterFast(base, instr.a, Data.new.boolean(revo.isFalse(self.readRegisterFast(base, instr.b)))),
+
         .table_new => {
             self.noteGCPressure(64);
-            try self.writeRegister(instr.a, .{ .table = try self.tables.create() });
+            try self.writeRegisterFast(base, instr.a, .{ .table = try self.tables.create() });
         },
         .table_set => {
             self.perf.table_set_ops += 1;
@@ -1442,12 +1497,12 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 else => return error.TypeError,
             };
             const t = try self.tables.get(t_id);
-            try t.put(t_id, self, try self.readRegister(instr.b), try self.readRegister(instr.c));
+            try t.put(t_id, self, self.readRegisterFast(base, instr.b), self.readRegisterFast(base, instr.c));
         },
         .table_get => {
             self.perf.table_get_ops += 1;
             const object = try self.readRegister(instr.b);
-            const key = try self.readRegister(instr.c);
+            const key = self.readRegisterFast(base, instr.c);
             if (try self.resolveField(object, key)) |resolved| {
                 try self.writeRegister(instr.a, resolved.value);
             } else try self.writeRegister(instr.a, revo.core_atoms.data(.undef));
@@ -1461,8 +1516,8 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             };
             const t = try self.tables.get(t_id);
             const key = Data.new.atom(instr.bx);
-            try t.put(t_id, self, key, try self.readRegister(instr.c));
-            try self.writeRegister(instr.a, .{ .table = t_id });
+            try t.put(t_id, self, key, self.readRegisterFast(base, instr.c));
+            try self.writeRegisterFast(base, instr.a, .{ .table = t_id });
         },
         .table_get_atom => {
             self.perf.table_get_ops += 1;
@@ -1488,7 +1543,7 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 .tuple => |id| id,
                 else => return error.TypeError,
             };
-            const idx_val = try self.readRegister(instr.c);
+            const idx_val = self.readRegisterFast(base, instr.c);
 
             // happy path: small non-negative number index
             if (idx_val == .number and idx_val.number >= 0 and @floor(idx_val.number) == idx_val.number) {
@@ -1524,17 +1579,17 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
         },
         .jump => self.currentFiber().pc = instr.bx,
         .jump_if_false => {
-            if (revo.isFalse(try self.readRegister(instr.a))) self.currentFiber().pc = instr.bx;
+            if (revo.isFalse(self.readRegisterFast(base, instr.a))) self.currentFiber().pc = instr.bx;
         },
         .jump_if_true => {
-            if (!revo.isFalse(try self.readRegister(instr.a))) self.currentFiber().pc = instr.bx;
+            if (!revo.isFalse(self.readRegisterFast(base, instr.a))) self.currentFiber().pc = instr.bx;
         },
         .load_global => {
             const value = self.globals.get(instr.bx) orelse {
                 try self.setRuntimeMessageFmt("undefined variable `{s}`", .{self.atomName(instr.bx)});
                 return error.UndefinedVariable;
             };
-            try self.writeRegister(instr.a, value);
+            try self.writeRegisterFast(base, instr.a, value);
         },
         .store_global => {
             if (self.const_globals.contains(instr.bx)) {
@@ -1571,15 +1626,15 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                     try upvalues.append(self.runtime.alloc, closure.upvalues[spec.index]);
                 }
             }
-            try self.writeRegister(instr.a, .{ .function = try self.functions.createClosure(instr.bx, upvalues.items) });
+            try self.writeRegisterFast(base, instr.a, .{ .function = try self.functions.createClosure(instr.bx, upvalues.items) });
         },
         .load_upval => {
             const closure = (try self.currentClosure()) orelse return error.InvalidLocal;
-            try self.writeRegister(instr.a, try self.loadUpvalueData(closure.upvalues[instr.bx]));
+            try self.writeRegisterFast(base, instr.a, try self.loadUpvalueData(closure.upvalues[instr.bx]));
         },
         .store_upval => {
             const closure = (try self.currentClosure()) orelse return error.InvalidLocal;
-            try self.storeUpvalueData(closure.upvalues[instr.bx], try self.readRegister(instr.a));
+            try self.storeUpvalueData(closure.upvalues[instr.bx], self.readRegisterFast(base, instr.a));
         },
         .call => try self.callRegister(instr),
         .call_field => try self.callFieldRegister(instr),
