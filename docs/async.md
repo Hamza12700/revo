@@ -32,8 +32,8 @@ fn server() do
   end
 end
 
-spawn(client, ())
-spawn(server, ())
+spawn client()
+spawn server()
 ```
 
 when `s:send()` would block, that fiber parks. the scheduler runs server fiber instead. once data is ready, the client fiber resumes with the result

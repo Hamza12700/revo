@@ -1,0 +1,79 @@
+proc doto(m) do
+  let items = m.items
+
+  let object = items[0]
+
+  fn action_to_call(action) do
+    let method = action[1][1]
+    let args = action[2]
+    let call = (:call, (:field, object, method), args, :true)
+    call
+  end
+
+  let calls = { }
+  
+  for i in 1..len(items) do
+    let action = items[i]
+    let call = action_to_call(action)
+    # print("CALL", call)
+    calls:push(call)
+  end
+  
+  { (:block, calls) }
+end
+
+struct Goblin {
+  name = "Grunt",
+  hp = 30,
+  max_hp = 30,
+  attack = 8,
+  defense = 3,
+  inventory,
+  weapon = "rusty dagger",
+  armor = "leather scraps",
+  faction = "Bleakwood",
+  rage = 0,
+
+  fn set_name(self, name) self.name = name,
+  fn set_hp(self, hp) self.hp = hp,
+  fn set_attack(self, attack) self.attack = attack,
+  fn set_defense(self, defense) self.defense = defense,
+  fn add_item(self, item) self.inventory = self.inventory:push(item),
+  fn set_weapon(self, weapon) self.weapon = weapon,
+  fn set_armor(self, armor) self.armor = armor,
+  fn set_faction(self, faction) self.faction = faction,
+  fn enrage(self) do
+    self.rage = 10
+    self.attack = self.attack + 5
+    print(self.name, "enrages! He waves his", self.weapon, "aggressively. Attack increased to", self.attack)
+  end,
+}
+
+let grunt = Goblin{inventory = {}}
+doto(
+  grunt,
+  set_hp(45),
+  set_attack(12),
+  set_name("Snaggletooth"),
+  set_defense(5),
+  add_item("healing potion"),
+  add_item("goblin ears"),
+  set_weapon("serrated cleaver"),
+  set_armor("studded hide"),
+  set_faction("Redmaw"),
+  enrage(),
+)
+
+print(grunt)
+##
+{ :name: Grunt,
+  :hp: 30,
+  :max_hp: 30,
+  :attack: 17,
+  :defense: 3,
+  :inventory: { },
+  :weapon: serrated cleaver,
+  :armor: leather scraps,
+  :faction: Bleakwood,
+  :rage: 10, }
+##

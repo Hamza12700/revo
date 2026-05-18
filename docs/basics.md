@@ -2,39 +2,58 @@
 
 **revo in 1 minute**
 ```ruby
-let a = 10       # mutable variable
-const b = 20     # immutable binding
-global c = 30    # module-level, visible across closures
+# bindings
+let a = 10
+const b = 20
+global c = 30
 
-# functions
+# functions + tables
 fn add(x, y) x + y
-const greet = fn(name) "hello, " + name
+const user = {
+  name = "revo",
+  points = add(a, b),
+  bump = fn(self) self.points += 1,
+}
+fn user:name(self) 
 
-# tables (the universal collection type)
-let t = {1, 2, 3}
-let h = {name = "revo", version = 1}
-h.stable = :true
+# pipes 
+"asdf"
+  |> _:upper() "ASDF"
+  |> _:sub(1, 2) # "SD"
+  |> assert_eq("sd") # "SD"
+  |> _ + "f" # "SDF"
+  |> inspect # "SDF"
+  |> print # :ok
 
-# tuples - fixed-shape, immutable
-const point = (10, 20)
-const (x, y) = point
+# makes a closure
+const u1 = user |> fn(u) u:bump()
+# makes a lexical scope
+const u2 = user |> _:bump()
+assert_eq(u1.points, u2.points)
 
-# pattern matching + result types
-fn safe_div(a, b)
-    if b == 0 (:err, :DivByZero)
-    else (:ok, a / b)
+#
+# result values + propagation/fallback
+#
 
-match safe_div(10, 2)
-    | (:ok, v)  print(v)     # 5
-    | (:err, e) print(e)
+# will unwrap the value, returning from this function otherwise
+# when at the toplevel, panics
+const n = tonumber("42")? 
+const fallback = tonumber("nope") orelse 0
 
-# pipes
-"hello" |> print
-(1, 2, 3) |> fn(t) map(t, fn(x) x * 2) |> print  # (2, 4, 6)
+# tuples + destructuring
+const tagged = (:ok, (u2.points + n + fallback, u2.name))
+const (tag, payload) = tagged
+const (total, name) = payload
+
+# match
+const state = match total
+  | v when v >= 84 :high
+  | _ :low
 
 # fibers
 const h = spawn add(20, 22)
-join(h)  # 42
+
+print((tag, total, name, state, join(h)))
 ```
 
 ## more
@@ -309,7 +328,7 @@ pipe passes a value as the first argument to the next function or match expressi
 ```ruby
 fn double(x) x * 2
 fn and_one(x) x + 1
-fn and_both(a, b) x + a + b
+fn and_both(x, a, b) x + a + b
 
 21 |> double     # 42
 "hello" |> print
@@ -358,36 +377,14 @@ const res = (2 + 2)
   |> tostring # tostring will never error
 ```
 
-pipes can also be used for error handling
-
+pipes pair well with `?`, `orelse`, and `match` for error handling:
 ```ruby
-# ok pipe
-a = (:ok, 20)
-  |>? fn(x) x + 22
-assert_eq(a, 42)
+const n = tonumber("41") orelse 0
+n |> fn(x) x + 1 |> assert_eq(42)
 
-# err pipe
-a = (:err, :DiskFull)
-  |>~ fn(v) fmt("handled %v", v)
-assert_eq(a, "handled (:err, :DiskFull)")
-
-# mixed
-a =
-  tonumber("no")
-  |>? fn(n) n + 1
-  |>~ fn(v) 0
-  |> assert_eq(0)
-```
-
-becomes very powerful when mixed with expect:
-```ruby
-fn f(what) what * 2
-  |> expect_eq(4) # will return either (:err, :NotEqual) or (:ok, 4)
-  |>? "is correct"
-  |>~ "is incorrect"
-
-f(2)
-f(4)
+match tonumber("nope")
+  | (:ok, v)  v |> fn(x) x + 1
+  | (:err, _) 0
 ```
 
 # iteration

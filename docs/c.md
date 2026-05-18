@@ -12,7 +12,7 @@ in this tutorial, yourw gonna write c functions that match the revo ffi signatur
 you can use the resulting library in two ways:
 
 - `const c = import("libprint.so")`, then call `c.echo()` or whatever you've exported
-- `c_use!("regex.so")`, which registers the exports as globals
+- `c_use("regex.so")`, which registers the exports as globals
 
 globals are usually not the best default, but they can be useful for small builtins.
 
@@ -86,7 +86,7 @@ R_EXPORT({"echo", echo}, {"strlen_fn", strlen_fn}, {"add", add})
 call from revo:
 
 ```ruby
-const c = ("examples.so")
+const c = import("examples.so")
 print(c.echo("hello")) # hello
 print(c.strlen_fn("revo")) # 4
 print(c.add(5, 3)) # 8

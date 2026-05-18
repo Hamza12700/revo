@@ -254,6 +254,9 @@ sets value without metamethods
 ### - `table:insert(pos: number, value: any) -> atom`
 inserts value at position, shifting elements right
 
+### - `table:push(value: any) -> table`
+inserts element as last
+
 ### - `table:as_tuple() -> tuple`
 converts table array part to tuple
 

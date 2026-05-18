@@ -6,6 +6,41 @@
 # this makes them similar to monads
 ##
 
+fn bind(trolley, track) match trolley
+  | (:ok, ok) track(ok)
+  | (:err, e) (:err, e)
+
+fn unwrap_or_else(trolley, track) match trolley
+  | (:err, e) track(e)
+  | (:ok, ok) (:ok, ok)
+
+fn or_else_msg(trolley, track) match trolley
+  | (:err, e, msg) track(e, msg)
+  | x x
+
+fn bind_http(trolley, track) match trolley
+  | (:ok, ok) when ok.status >= 400 and ok.stats < 500 track(ok)
+  | (:ok, ok) (:ok, ok)
+  | (:err, e) (:err, e)
+
+let v = (:ok, 5)
+  |> bind(fn(c) do
+    (:ok, c * 2)
+  end)
+  |> bind(fn(c) do
+    (:ok, c * 2)
+  end)
+  |> bind(fn(c) do
+    (:ok, c * 2)
+  end)
+  |> unwrap_or_else(fn(c) do
+    (:ok, 0)
+  end)
+  |> bind(fn(c) do
+    (:err, 42)
+  end)
+  |> inspect
+
 let a = {inner = 21, mutate = fn(self) self.inner *= 2}
 # explicit pipe
 a |> fn(c) c:mutate()
@@ -18,10 +53,11 @@ a |> fn(c) c:mutate()
 
 a = {inner = 21, mutate = fn(self) self.inner *= 2}
 # placeholder
+
 a |> _:mutate()
   |> assert_eq(_.inner, 42)
+  |> inspect
   |> do
     print("got", _)
     (:ok, _)
   end
-  |> inspect
