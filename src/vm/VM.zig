@@ -17,7 +17,11 @@ pub const VM = @This();
 pub const GlobalID = mem.StringID;
 pub const Globals = std.AutoHashMap(GlobalID, Data);
 pub const ConstGlobals = std.AutoHashMap(GlobalID, void);
-pub const ModuleCache = std.StringHashMap(Data);
+pub const ModuleCache = std.StringHashMap(struct {
+    result: Data,
+    loaded: bool,
+    pending: bool,
+});
 pub const ChannelID = mem.TableID;
 pub const FiberID = usize;
 pub const PerfCounters = struct {
@@ -134,6 +138,7 @@ loading_stack: std.ArrayList([]const u8),
 /// matches type enum order
 metatables: [@typeInfo(memory.Type).@"enum".fields.len]?mem.TableID = .{null} ** @typeInfo(memory.Type).@"enum".fields.len,
 module_cache: ModuleCache,
+package_path: std.ArrayList([]const u8),
 debug_infos: std.ArrayList(DebugInfo),
 pending_debug_info_id: ?DebugInfoID = null,
 panic_message: ?[]const u8 = null,
@@ -162,6 +167,7 @@ pub fn init(runtime: revo.Runtime) !VM {
         .strings = try Interner.init(runtime.alloc),
         .atoms = std.StringHashMap(mem.AtomID).init(runtime.alloc),
         .module_cache = ModuleCache.init(runtime.alloc),
+        .package_path = try std.ArrayList([]const u8).initCapacity(runtime.alloc, 4),
         .debug_infos = try std.ArrayList(DebugInfo).initCapacity(runtime.alloc, 8),
         .globals = Globals.init(runtime.alloc),
         .const_globals = ConstGlobals.init(runtime.alloc),
@@ -169,6 +175,7 @@ pub fn init(runtime: revo.Runtime) !VM {
         .loading_stack = try std.ArrayList([]const u8).initCapacity(runtime.alloc, 1),
         .loaded_extensions = try .initCapacity(runtime.alloc, 0),
     };
+    try vm.package_path.appendSlice(runtime.alloc, &.{ "./?", "./lib/?", "/usr/local/lib/revo/?" });
     // wire scheduler io poll to net poll as default; runtime may replace this
     vm.sched.io_poll = revo.std_net.pollIoWaiters;
     try vm.sched.fibers.append(runtime.alloc, .{
@@ -260,6 +267,7 @@ pub fn deinit(self: *VM) void {
         self.runtime.alloc.free(info.source_name);
     }
     self.debug_infos.deinit(self.runtime.alloc);
+    self.package_path.deinit(self.runtime.alloc);
     var cache_it = self.module_cache.keyIterator();
     while (cache_it.next()) |key|
         self.runtime.alloc.free(key.*);
@@ -1860,7 +1868,7 @@ fn markRoots(self: *VM) void {
     }
 
     var cache_it = self.module_cache.iterator();
-    while (cache_it.next()) |v| self.markData(v.value_ptr.*);
+    while (cache_it.next()) |v| self.markData(v.value_ptr.*.result);
 
     var channel_it = self.sched.channels.iterator();
     while (channel_it.next()) |entry| {

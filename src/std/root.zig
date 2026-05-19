@@ -941,7 +941,7 @@ pub fn import(args: []const Data, vm: *VM) !NativeResult {
         return .okData(.{ .table = t_id });
     }
 
-    if (vm.module_cache.get(resolved_path)) |cached| return .{ .ok = cached };
+    if (vm.module_cache.get(resolved_path)) |cached| return .{ .ok = cached.result };
     for (vm.loading_stack.items) |loading| {
         if (std.mem.eql(u8, loading, resolved_path)) return error.CyclicImport;
     }
@@ -964,7 +964,7 @@ pub fn import(args: []const Data, vm: *VM) !NativeResult {
     };
     _ = vm.loading_stack.pop();
 
-    try vm.module_cache.put(cache_key, result);
+    try vm.module_cache.put(cache_key, .{ .result = result, .loaded = true, .pending = false });
     return .{ .ok = result };
 }
 
