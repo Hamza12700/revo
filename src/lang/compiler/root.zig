@@ -29,12 +29,23 @@ pub const type_check = @import("type_check.zig");
 const values = @import("values.zig");
 
 pub const LowerErrorKind = enum { ParseError, UnsupportedSyntax, InvalidAssignmentTarget, IntegerOutOfRange };
-pub const LowerFailure = struct { kind: LowerErrorKind, span: ast.Span, message: []const u8, source_name: ?[]const u8 = null };
 pub const LowerResult = union(enum) { ok: []Instruction, err: LowerFailure };
 pub const Artifact = struct { instructions: []Instruction, spans: []ast.Span };
 pub const ArtifactResult = union(enum) { ok: Artifact, err: LowerFailure };
 pub const LowerError = error{ ParseError, UnsupportedSyntax, InvalidAssignmentTarget, IntegerOutOfRange } || std.mem.Allocator.Error || expander.ExpandError;
 const InternalLowerError = LowerError || error{LoweringFailed};
+
+pub const LowerFailure = struct {
+    kind: LowerErrorKind,
+    span: ast.Span,
+    message: []const u8,
+    owned: bool = false,
+    source_name: ?[]const u8 = null,
+
+    pub fn deinit(self: LowerFailure, alloc: std.mem.Allocator) void {
+        if (self.owned) alloc.free(self.message);
+    }
+};
 
 pub fn lowerExprArtifactReport(vm: *VM, expr: *const Node, test_mode: bool) !ArtifactResult {
     var arena = std.heap.ArenaAllocator.init(vm.runtime.alloc);
@@ -375,7 +386,14 @@ pub const Compiler = struct {
             if (sig.param_types[i]) |expected_type| {
                 const actual_type = type_check.inferExprType(self, args[i]);
                 type_check.checkType(self.alloc, type_check.typeInfoFromName(expected_type), actual_type, args[i].span) catch |err| switch (err) {
-                    error.TypeError => return self.fail(.ParseError, args[i], "type mismatch in function call"),
+                    error.TypeError => {
+                        const msg = try std.fmt.allocPrint(
+                            self.alloc,
+                            "argument {d} to `{s}` expects {s}, got {s}",
+                            .{ i + 1, fn_name, expected_type, types.typeName(actual_type) },
+                        );
+                        return self.fail(.ParseError, args[i], msg);
+                    },
                 };
             }
         }
@@ -406,7 +424,7 @@ pub const Compiler = struct {
         const result = try VM.module.runCompiledModuleReport(self.comp_vm, "<comp>", artifact.instructions);
         if (result == .err) {
             const eval_failure = result.err;
-            self.failure = .{ .kind = .ParseError, .span = eval_failure.span orelse expr.span, .message = eval_failure.message, .source_name = eval_failure.source_name };
+            self.failure = .{ .kind = .ParseError, .span = eval_failure.span orelse expr.span, .message = eval_failure.message, .owned = false, .source_name = eval_failure.source_name };
             return error.LoweringFailed;
         }
         try emit.@"const"(self, self.comp_vm.mainResult());
@@ -576,10 +594,7 @@ pub const Compiler = struct {
     }
 
     fn typeStr(t: types.TypeInfo) []const u8 {
-        return switch (t) {
-            .struct_type => |s| s,
-            else => @tagName(t),
-        };
+        return types.typeName(t);
     }
 
     fn validateReturnType(self: *Compiler, val: *const Node) !void {
@@ -589,7 +604,11 @@ pub const Compiler = struct {
         const expected = type_check.typeInfoFromName(declared);
         type_check.checkType(self.alloc, expected, actual, val.span) catch |err| switch (err) {
             error.TypeError => {
-                const msg = try std.fmt.allocPrint(self.alloc, "return type mismatch: wanted {s}, got {s}", .{ declared, typeStr(actual) });
+                const msg = try std.fmt.allocPrint(
+                    self.alloc,
+                    "return type mismatch: wanted {s}, got {s}",
+                    .{ declared, typeStr(actual) },
+                );
                 return self.fail(.ParseError, val, msg);
             },
         };
@@ -605,12 +624,17 @@ pub const Compiler = struct {
         const expected = type_check.typeInfoFromName(declared);
         type_check.checkType(self.alloc, expected, actual, last_expr.span) catch |err| switch (err) {
             error.TypeError => {
-                const msg = try std.fmt.allocPrint(self.alloc, "return type mismatch: wanted {s}, got {s}", .{ declared, typeStr(actual) });
+                const msg = try std.fmt.allocPrint(
+                    self.alloc,
+                    "return type mismatch: wanted {s}, got {s}",
+                    .{ declared, typeStr(actual) },
+                );
                 return self.fail(.ParseError, last_expr, msg);
             },
         };
     }
 
+    /// compat in case i wanna add 
     pub fn fail(self: *Compiler, kind: LowerErrorKind, expr: *const Node, message: []const u8) error{LoweringFailed} {
         return emit.fail(self, kind, expr, message);
     }

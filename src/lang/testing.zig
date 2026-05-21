@@ -251,7 +251,10 @@ pub fn expectCompileError(source: []const u8, expected: lang.LowerErrorKind) !vo
             return error.ExpectedCompileFailure;
         },
         .err => |failure| switch (failure) {
-            .lower => |lower| try std.testing.expectEqual(expected, lower.kind),
+            .lower => |lower| {
+                defer lang.deinitError(alloc, failure);
+                try std.testing.expectEqual(expected, lower.kind);
+            },
             .parse => return error.ExpectedLowerFailure,
         },
     }
@@ -279,6 +282,7 @@ pub fn expectCompileFailure(
         .err => |failure| switch (failure) {
             .parse => return error.ExpectedLowerFailure,
             .lower => |lower| {
+                defer lang.deinitError(alloc, failure);
                 try std.testing.expectEqual(expected_kind, lower.kind);
                 try std.testing.expectEqual(expected_line, lower.span.line);
                 try std.testing.expectEqual(expected_column, lower.span.column);

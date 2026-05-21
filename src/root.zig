@@ -56,6 +56,7 @@ pub const Runtime = struct {
                 defer buf.deinit();
                 try lang.renderError(self.alloc, &buf.writer, .{ .name = name, .text = source }, err);
                 std.debug.print("{s}", .{buf.written()});
+                lang.deinitError(self.alloc, err);
                 return error.CompilationError;
             },
         };

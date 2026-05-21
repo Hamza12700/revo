@@ -125,9 +125,11 @@ fn compileProgram(vm: *VM, name: []const u8, source: []const u8) ?*Program {
             defer buf.deinit();
             revo.lang.renderError(vm.alloc, &buf.writer, .{ .name = name, .text = source }, failure) catch {
                 setError(vm, "compile error");
+                revo.lang.deinitError(vm.alloc, failure);
                 break :blk null;
             };
             setError(vm, buf.written());
+            revo.lang.deinitError(vm.alloc, failure);
             break :blk null;
         },
     };

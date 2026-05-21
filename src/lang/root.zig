@@ -27,6 +27,7 @@ pub const types = compiler.types;
 pub const ir = compiler.ir;
 
 pub const renderError = pipeline.renderError;
+pub const deinitError = pipeline.deinitError;
 pub const expandExpr = expander.expandExpr;
 pub const lex = lexer.lex;
 pub const lexReport = lexer.lexReport;

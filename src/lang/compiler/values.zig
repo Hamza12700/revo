@@ -4,6 +4,7 @@ const revo = @import("revo");
 const Data = revo.Data;
 const Instruction = revo.Instruction;
 const Compiler = revo.lang.compiler.Compiler;
+const types_mod = @import("types.zig");
 
 const ast = @import("../ast.zig");
 const Node = ast.Node;
@@ -28,7 +29,15 @@ pub fn compileLocalBinding(self: *Compiler, name: []const u8, value: *const Node
 
     if (type_name) |tn| {
         type_check.validateBindingType(self, tn, value) catch |err| switch (err) {
-            error.TypeError => return self.fail(.ParseError, value, "type mismatch"),
+            error.TypeError => {
+                const actual = type_check.inferExprType(self, value);
+                const msg = try std.fmt.allocPrint(
+                    self.alloc,
+                    "binding `{s}` expects {s}, got {s}",
+                    .{ name, tn, types_mod.typeName(actual) },
+                );
+                return self.fail(.ParseError, value, msg);
+            },
         };
     }
 
@@ -118,13 +127,30 @@ fn compileAssignSimple(self: *Compiler, target: *const Node, value: *const Node)
             } else if (try state.resolveUpvalue(self, name)) |slot| {
                 try emit.emit(self, .store_upval, slot);
             } else {
-                return self.fail(.InvalidAssignmentTarget, target, "assignment target is not declared");
+                const msg = try std.fmt.allocPrint(
+                    self.alloc,
+                    "assignment target `{s}` is not declared",
+                    .{name},
+                );
+                return self.fail(.InvalidAssignmentTarget, target, msg);
             }
         },
         .field => |field| {
             if (self.resolveTypedStructFieldOffset(field.object, field.name)) |field_offset| {
                 type_check.validateAssignmentType(self, target, value) catch |err| switch (err) {
-                    error.TypeError => return self.fail(.ParseError, value, "type mismatch on struct field"),
+                    error.TypeError => {
+                        const actual = type_check.inferExprType(self, value);
+                        const fn_state = state.currentFunctionState(self) orelse unreachable;
+                        const type_name = fn_state.var_types.get(field.object.expr.ident) orelse unreachable;
+                        const layout = self.struct_layouter.getLayout(type_name orelse unreachable) orelse unreachable;
+                        const expected = layout.fields[field_offset].field_type;
+                        const msg = try std.fmt.allocPrint(
+                            self.alloc,
+                            "field `{s}` on `{s}` expects {s}, got {s}",
+                            .{ field.name, type_name.?, types_mod.typeName(expected), types_mod.typeName(actual) },
+                        );
+                        return self.fail(.ParseError, value, msg);
+                    },
                 };
                 try self.compile(field.object, true);
                 try compileAssignIntoStructOffset(self, field_offset, value);
@@ -142,7 +168,10 @@ fn compileAssignSimple(self: *Compiler, target: *const Node, value: *const Node)
                 try compileAssignIntoTable(self, value);
             }
         },
-        else => return self.fail(.InvalidAssignmentTarget, target, "invalid assignment target"),
+        else => {
+            const msg = try std.fmt.allocPrint(self.alloc, "invalid assignment target: {}", .{target.*});
+            return self.fail(.InvalidAssignmentTarget, target, msg);
+        },
     }
 }
 
@@ -170,7 +199,6 @@ pub fn compileTuple(self: *Compiler, items: []const *Node) !void {
 }
 
 pub fn compileStruct(self: *Compiler, expr: *const Node, name: []const u8, items: []const StructItem) !void {
-    const types_mod = @import("types.zig");
     const struct_layout_mod = @import("struct_layout.zig");
     // collect typed fields for layout calculation
     var field_defs = try std.ArrayList(struct_layout_mod.FieldDef).initCapacity(self.alloc, items.len);
@@ -216,8 +244,10 @@ pub fn compileStruct(self: *Compiler, expr: *const Node, name: []const u8, items
     // comp method bindings
     for (items) |item| switch (item) {
         .binding => |b| {
-            if (b.target.expr != .ident)
-                return self.fail(.UnsupportedSyntax, expr, "assignment target must be named");
+            if (b.target.expr != .ident) {
+                const msg = try std.fmt.allocPrint(self.alloc, "assignment target must be named: {}", .{b.target.*});
+                return self.fail(.UnsupportedSyntax, expr, msg);
+            }
             const key_atom = try self.vm.internAtom(b.target.expr.ident);
             try flow.emitStorageLoad(self, .{ .local = descriptor_temp });
             try emit.@"const"(self, Data.new.atom(key_atom));
@@ -292,7 +322,6 @@ pub fn compileTable(self: *Compiler, entries: []const ast.TableEntry) !void {
 }
 
 fn typeInfoFromName(type_name: []const u8) @import("types.zig").TypeInfo {
-    const types_mod = @import("types.zig");
     if (std.mem.eql(u8, type_name, "int")) return types_mod.TypeInfo.int;
     if (std.mem.eql(u8, type_name, "float")) return types_mod.TypeInfo.float;
     if (std.mem.eql(u8, type_name, "string")) return types_mod.TypeInfo.string;

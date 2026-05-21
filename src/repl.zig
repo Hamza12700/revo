@@ -115,7 +115,10 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
         const build_result = revo.lang.build(vm, .{ .name = "<repl>", .text = source_acc.items }, .{}) catch continue :outer;
         const artifact = switch (build_result) {
             .ok => |ok| ok,
-            .err => continue :outer,
+            .err => |err| {
+                revo.lang.deinitError(gpa, err);
+                continue :outer;
+            },
         };
         defer gpa.free(artifact.instructions);
         defer gpa.free(artifact.spans);

@@ -169,6 +169,7 @@ fn handleBuildError(init: std.process.Init, gpa: Allocator, source_name: []const
         printError(init, "while rendering error - {}", .{render_err});
     };
     std.debug.print("{s}", .{buf.written()});
+    revo.lang.deinitError(gpa, err);
 }
 
 fn compileSource(init: std.process.Init, vm: *VM, gpa: Allocator, source_name: []const u8, source_text: []const u8, test_mode: bool) !Artifact {

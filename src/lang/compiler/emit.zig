@@ -362,7 +362,8 @@ pub fn patchJumpToLabel(self: *Compiler, jump_idx: usize, target: usize) void {
 }
 
 pub fn fail(self: *Compiler, kind: anytype, expr: *const Node, msg: []const u8) error{LoweringFailed} {
-    self.failure = .{ .kind = kind, .span = expr.span, .message = msg };
+    const owned_msg = self.runtime_alloc.dupe(u8, msg) catch "out of memory while formatting error message";
+    self.failure = .{ .kind = kind, .span = expr.span, .message = owned_msg, .owned = owned_msg.ptr != msg.ptr };
     return error.LoweringFailed;
 }
 

@@ -139,6 +139,13 @@ pub fn renderError(allocator: std.mem.Allocator, writer: *std.Io.Writer, source:
     };
 }
 
+pub fn deinitError(alloc: std.mem.Allocator, err: Error) void {
+    switch (err) {
+        .parse => {},
+        .lower => |failure| failure.deinit(alloc),
+    }
+}
+
 pub fn parseSource(allocator: std.mem.Allocator, source: []const u8) !*Node {
     return switch (try parseSourceReport(allocator, source)) {
         .ok => |expr| expr,

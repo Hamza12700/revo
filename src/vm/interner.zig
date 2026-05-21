@@ -128,7 +128,10 @@ test "string literals survive source free" {
     const source = try alloc.dupe(u8, "\"hello\"");
     const artifact = switch (try lang.build(&vm, .{ .text = source }, .{})) {
         .ok => |ok| ok,
-        .err => return error.ParseFailed,
+        .err => |err| {
+            defer lang.deinitError(alloc, err);
+            return error.ParseFailed;
+        },
     };
     alloc.free(source);
     defer alloc.free(artifact.instructions);

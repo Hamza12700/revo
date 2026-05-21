@@ -63,7 +63,10 @@ pub fn build(args: []const Data, vm: *VM) !NativeResult {
             return root.resultTuple(vm, .ok, .{ .string = sid });
         },
         .err => |err| switch (err) {
-            .lower => |e| return root.resultTuple(vm, .err, try vm.ownDataString(e.message)),
+            .lower => |e| {
+                defer revo.lang.deinitError(vm.runtime.alloc, err);
+                return root.resultTuple(vm, .err, try vm.ownDataString(e.message));
+            },
             .parse => |e| return root.resultTuple(vm, .err, try vm.ownDataString(e.message)),
         },
     }

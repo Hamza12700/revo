@@ -10,7 +10,7 @@
 
 # typed bindings: int literal inferred as int
 let x: int = 42
-# let bad_int: int = "hello"      # type mismatch: expected int, got string
+let bad_int: int = "hello"      # type mismatch: expected int, got string
 
 # typed bindings: float literal inferred as float
 let y: float = 3.14

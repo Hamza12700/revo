@@ -185,7 +185,12 @@ pub fn compileFor(
     iter: *const Node,
 ) !void {
     if (params.len == 0 or params.len > 2) {
-        return self.fail(.UnsupportedSyntax, iter, "for expects one or two binding names");
+        const msg = try std.fmt.allocPrint(
+            self.alloc,
+            "for expects one or two binding names, got {d}",
+            .{params.len},
+        );
+        return self.fail(.UnsupportedSyntax, iter, msg);
     }
 
     if (iter.expr == .range_literal) {

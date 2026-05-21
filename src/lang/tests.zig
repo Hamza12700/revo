@@ -1097,6 +1097,18 @@ test "compile report carries span and message" {
     );
 }
 
+test "compile report includes function call argument detail" {
+    try t.expectCompileFailure(
+        \\ const id = fn(x: int) x
+        \\ id("nope")
+    ,
+        .ParseError,
+        2,
+        5,
+        "argument 1 to `id` expects int, got string",
+    );
+}
+
 test "runtime report carries span and message" {
     try t.expectRuntimeFailure(
         "1 / 0",
@@ -1824,7 +1836,7 @@ test "assignment to undefined name is rejected" {
         \\     y
         \\ end
         \\ f()
-    , .InvalidAssignmentTarget, 2, 6, "assignment target is not declared");
+    , .InvalidAssignmentTarget, 2, 6, "assignment target `y` is not declared");
 }
 
 //

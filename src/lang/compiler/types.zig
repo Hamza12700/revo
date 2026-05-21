@@ -37,6 +37,13 @@ pub const TypeInfo = union(enum) {
 
 pub const FunctionSignature = struct { params: []const TypeInfo, return_type: TypeInfo };
 
+pub fn typeName(t: TypeInfo) []const u8 {
+    return switch (t) {
+        .struct_type => |s| s,
+        else => @tagName(t),
+    };
+}
+
 pub fn isNumeric(t: TypeInfo) bool {
     return t == .int or t == .float;
 }
