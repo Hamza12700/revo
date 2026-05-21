@@ -5,16 +5,19 @@
 #   they also help the compiler optimize your program
 #
 # untyped code defaults to dynamic (any) and works as before
+#
+# error gallery:
+#   uncomment the snippets below one at a time to see the helpful messages
 
 # scalar binds & coercion
 
 # typed bindings: int literal inferred as int
 let x: int = 42
 # let bad_int: int = "hello"      # type mismatch: expected int, got string
+# let bad_float: float = "world"  # type mismatch: expected float, got string
 
 # typed bindings: float literal inferred as float
 let y: float = 3.14
-# let bad_float: float = "world"  # type mismatch: expected float, got string
 
 # int coerces to float (allowed)
 let z: float = 10
@@ -25,14 +28,20 @@ let z: float = 10
 # typed function params: both args must be int, result inferred
 fn add(a: int, b: int) a + b
 let sum = add(3, 4)
-add(3, "wrong") # type mismatch in function call
+# add(3, "wrong")    # argument 2 to `add` expects int, got string
+# add("wrong", 3)    # argument 1 to `add` expects int, got string
+
+# typed function return validation
+# fn bad_return() -> int do
+#     return "oops"
+# end
 
 # typed function with return type annotation
 fn double(n: int) -> int do
     return n * 2
 end
 let doubled = double(5)
-# double("hello")                 # ct error: type mismatch in function call
+# double("hello")  # argument 1 to `double` expects int, got string
 
 # typed function with mixed params
 const scale = fn(v: float, factor: int) v * factor
@@ -62,7 +71,8 @@ struct Point {
 let p: Point = Point { x = 10, y = 20 }
 let px = p.x           # typed struct field access: emits struct_get_offset (fast)
 p.x = 100
-# p.x = "not a number" # type mismatch on struct field
+# p.x = "not a number" # field `x` on `Point` expected number, got string
+# let bad_point: Point = Point { x = 10, y = "oops" }
 
 struct Person {
     name: string = "",
@@ -73,7 +83,8 @@ struct Person {
 # create typed struct instance & modify fields
 let person: Person = Person { name = "alice", age = 30 }
 let pname = person.name
-# person.name = 42 # type mismatch on struct field
+# person.name = 42 # field `name` on `Person` expected string, got number
+# let bad_person: Person = Person { name = 1, age = 30 }
 
 
 # type inference & opcode specialization
@@ -101,5 +112,8 @@ let mixed = i1 + f1  # emits add (generic)
 let a = 10
 let b = 20
 let c = a + b
+
+# tuple binding error showcase
+# const first, second = (1,)
 
 sum
