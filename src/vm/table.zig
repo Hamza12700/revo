@@ -24,67 +24,81 @@ const memory = revo.memory;
 const Data = memory.Data;
 const testing = revo.lang.testing;
 
-pub const TableSlot = struct {
-    value: ?Table = null,
-    marked: bool = false,
-    next_free: ?memory.TableID = null,
-};
-
 pub const TablePool = struct {
     alloc: std.mem.Allocator,
-    tables: std.ArrayList(TableSlot),
-    free_head: ?memory.TableID = null,
+    tables: std.ArrayList(?Table),
+    marks: std.DynamicBitSet,
+    dead: std.ArrayList(memory.TableID),
 
     pub fn init(alloc: std.mem.Allocator) !TablePool {
         return .{
             .alloc = alloc,
-            .tables = try std.ArrayList(TableSlot).initCapacity(alloc, 4),
+            .tables = try std.ArrayList(?Table).initCapacity(alloc, 4),
+            .marks = try std.DynamicBitSet.initEmpty(alloc, 64),
+            .dead = try std.ArrayList(memory.TableID).initCapacity(alloc, 0),
         };
     }
 
     pub fn deinit(self: *TablePool) void {
-        for (self.tables.items) |*slot|
-            if (slot.value) |*tbl| tbl.deinit();
+        for (self.tables.items) |*maybe_t| {
+            if (maybe_t.*) |*t| t.deinit();
+        }
         self.tables.deinit(self.alloc);
+        self.marks.deinit();
+        self.dead.deinit(self.alloc);
     }
 
     pub fn create(self: *TablePool) !memory.TableID {
-        return try revo.allocSlot(TableSlot, memory.TableID, self.alloc, &self.tables, &self.free_head, .{ .value = try Table.init(self.alloc) });
+        if (self.dead.pop()) |id| {
+            self.tables.items[id] = try Table.init(self.alloc);
+            return id;
+        }
+        const id: memory.TableID = @intCast(self.tables.items.len);
+        try self.tables.append(self.alloc, try Table.init(self.alloc));
+        if (id >= self.marks.capacity()) {
+            try self.marks.resize(self.tables.items.len, false);
+        }
+        return id;
     }
 
     pub fn get(self: *TablePool, id: memory.TableID) !*Table {
         if (id >= self.tables.items.len) return error.InvalidTable;
-        if (self.tables.items[id].value) |*t| return t;
+        if (self.tables.items[id]) |*t| return t;
         return error.InvalidTable;
     }
 
     pub fn isValid(self: *const TablePool, id: memory.TableID) bool {
-        return id < self.tables.items.len and self.tables.items[id].value != null;
+        return id < self.tables.items.len and self.tables.items[id] != null;
     }
 
     pub fn mark(self: *TablePool, id: memory.TableID, vm: *revo.VM) void {
         if (id >= self.tables.items.len) return;
-        const slot = &self.tables.items[id];
-        if (slot.value) |*t| {
-            if (slot.marked) return;
-            slot.marked = true;
+        if (self.marks.isSet(id)) return;
+        if (self.tables.items[id]) |*t| {
+            self.marks.set(id);
             t.mark(vm);
             if (t.metatable) |mt| self.mark(mt, vm);
         }
     }
 
     pub fn sweep(self: *TablePool) void {
-        revo.sweepSlots(TableSlot, memory.TableID, &self.tables, &self.free_head, self, TablePool.finalizeSlot);
-    }
-
-    fn finalizeSlot(slot: *TableSlot, _: *TablePool) void {
-        if (slot.value) |*t| t.deinit();
+        const max_dead = self.tables.items.len;
+        self.dead.ensureTotalCapacity(self.alloc, max_dead) catch return;
+        self.dead.items.len = 0;
+        for (self.tables.items, 0..) |*maybe_t, idx| {
+            if (maybe_t.* == null) continue;
+            if (self.marks.isSet(idx)) continue;
+            maybe_t.*.?.deinit();
+            maybe_t.* = null;
+            self.dead.appendAssumeCapacity(@intCast(idx));
+        }
+        self.marks.unmanaged.unsetAll();
     }
 
     pub fn bytes(self: *const TablePool) usize {
         var total: usize = 0;
-        for (self.tables.items) |slot| {
-            if (slot.value) |*t| total += t.bytes();
+        for (self.tables.items) |maybe_t| {
+            if (maybe_t) |t| total += t.bytes();
         }
         return total;
     }

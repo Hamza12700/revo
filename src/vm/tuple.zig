@@ -32,75 +32,79 @@ pub const Tuple = struct {
 
 pub const TuplePool = struct {
     alloc: std.mem.Allocator,
-    tuples: std.ArrayList(TupleSlot),
-    free_head: ?memory.TupleID = null,
-
-    pub const TupleSlot = struct {
-        value: ?Tuple = null,
-        marked: bool = false,
-        next_free: ?memory.TupleID = null,
-    };
+    tuples: std.ArrayList(?Tuple),
+    marks: std.DynamicBitSet,
+    dead: std.ArrayList(memory.TupleID),
 
     pub fn init(alloc: std.mem.Allocator) !TuplePool {
         return .{
             .alloc = alloc,
-            .tuples = try std.ArrayList(TupleSlot).initCapacity(alloc, 4),
+            .tuples = try std.ArrayList(?Tuple).initCapacity(alloc, 4),
+            .marks = try std.DynamicBitSet.initEmpty(alloc, 64),
+            .dead = try std.ArrayList(memory.TupleID).initCapacity(alloc, 0),
         };
     }
 
     pub fn deinit(self: *TuplePool) void {
-        for (self.tuples.items) |*slot| {
-            if (slot.value) |*tuple| {
-                tuple.deinit();
-            }
+        for (self.tuples.items) |*maybe_t| {
+            if (maybe_t.*) |*t| t.deinit();
         }
         self.tuples.deinit(self.alloc);
+        self.marks.deinit();
+        self.dead.deinit(self.alloc);
     }
 
     pub fn create(self: *TuplePool, items: []const Data) !memory.TupleID {
         const owned = try self.alloc.dupe(Data, items);
-        return try revo.allocSlot(
-            TupleSlot,
-            memory.TupleID,
-            self.alloc,
-            &self.tuples,
-            &self.free_head,
-            .{ .value = .{ .alloc = self.alloc, .items = owned } },
-        );
+        errdefer self.alloc.free(owned);
+        if (self.dead.pop()) |id| {
+            self.tuples.items[id] = .{ .alloc = self.alloc, .items = owned };
+            return id;
+        }
+        const id: memory.TupleID = @intCast(self.tuples.items.len);
+        try self.tuples.append(self.alloc, .{ .alloc = self.alloc, .items = owned });
+        if (id >= self.marks.capacity()) {
+            try self.marks.resize(self.tuples.items.len, false);
+        }
+        return id;
     }
 
     pub fn get(self: *TuplePool, id: memory.TupleID) !*Tuple {
         if (id >= self.tuples.items.len) return error.InvalidTuple;
-        const slot = &self.tuples.items[id];
-        if (slot.value) |*tuple| return tuple;
+        if (self.tuples.items[id]) |*t| return t;
         return error.InvalidTuple;
     }
 
     pub fn mark(self: *TuplePool, id: memory.TupleID, vm: *revo.VM) void {
         if (id >= self.tuples.items.len) return;
-        const slot = &self.tuples.items[id];
-        if (slot.value) |*tuple| {
-            if (slot.marked) return;
-            slot.marked = true;
+        if (self.marks.isSet(id)) return;
+        if (self.tuples.items[id]) |*tuple| {
+            self.marks.set(id);
             for (tuple.items) |item| vm.markData(item);
             if (tuple.metatable) |mt| vm.tables.mark(mt, vm);
         }
     }
 
     pub fn sweep(self: *TuplePool) void {
-        revo.sweepSlots(TupleSlot, memory.TupleID, &self.tuples, &self.free_head, self, TuplePool.finalizeSlot);
-    }
-
-    fn finalizeSlot(slot: *TupleSlot, _: *TuplePool) void {
-        if (slot.value) |*tuple| tuple.deinit();
+        const max_dead = self.tuples.items.len;
+        self.dead.ensureTotalCapacity(self.alloc, max_dead) catch return;
+        self.dead.items.len = 0;
+        for (self.tuples.items, 0..) |*maybe_t, idx| {
+            if (maybe_t.* == null) continue;
+            if (self.marks.isSet(idx)) continue;
+            maybe_t.*.?.deinit();
+            maybe_t.* = null;
+            self.dead.appendAssumeCapacity(@intCast(idx));
+        }
+        self.marks.unmanaged.unsetAll();
     }
 
     pub fn bytes(self: *const TuplePool) usize {
         var total: usize = 0;
-        for (self.tuples.items) |slot| {
-            if (slot.value) |*tuple| {
-                total += 32; // tuple base overhead
-                total += @sizeOf(Data) * tuple.items.len; // per element
+        for (self.tuples.items) |maybe_t| {
+            if (maybe_t) |t| {
+                total += 32;
+                total += @sizeOf(Data) * t.items.len;
             }
         }
         return total;

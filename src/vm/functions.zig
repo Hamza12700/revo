@@ -69,18 +69,6 @@ pub const Upvalue = struct {
     closed: Data,
 };
 
-pub const UpvalueSlot = struct {
-    value: ?Upvalue = null,
-    marked: bool = false,
-    next_free: ?UpvalueID = null,
-};
-
-pub const FunctionSlot = struct {
-    value: ?Function = null,
-    marked: bool = false,
-    next_free: ?mem.FunctionID = null,
-};
-
 pub const Function = union(enum) {
     closure: Closure,
     native: revo.std_lib.NativeFunc,
@@ -105,24 +93,30 @@ pub const Function = union(enum) {
 
 pub const FunctionPool = struct {
     alloc: std.mem.Allocator,
-    functions: std.ArrayList(FunctionSlot),
+    functions: std.ArrayList(?Function),
+    function_marks: std.DynamicBitSet,
+    function_dead: std.ArrayList(mem.FunctionID),
     prototypes: std.ArrayList(Prototype),
-    upvalues: std.ArrayList(UpvalueSlot),
-    free_head: ?mem.FunctionID = null,
-    upvalue_free_head: ?UpvalueID = null,
+    upvalues: std.ArrayList(?Upvalue),
+    upvalue_marks: std.DynamicBitSet,
+    upvalue_dead: std.ArrayList(UpvalueID),
 
     pub fn init(alloc: std.mem.Allocator) !FunctionPool {
         return .{
             .alloc = alloc,
-            .functions = try std.ArrayList(FunctionSlot).initCapacity(alloc, 16),
+            .functions = try std.ArrayList(?Function).initCapacity(alloc, 16),
+            .function_marks = try std.DynamicBitSet.initEmpty(alloc, 64),
+            .function_dead = try std.ArrayList(mem.FunctionID).initCapacity(alloc, 0),
             .prototypes = try std.ArrayList(Prototype).initCapacity(alloc, 16),
-            .upvalues = try std.ArrayList(UpvalueSlot).initCapacity(alloc, 16),
+            .upvalues = try std.ArrayList(?Upvalue).initCapacity(alloc, 16),
+            .upvalue_marks = try std.DynamicBitSet.initEmpty(alloc, 64),
+            .upvalue_dead = try std.ArrayList(UpvalueID).initCapacity(alloc, 0),
         };
     }
 
     pub fn deinit(self: *FunctionPool) void {
-        for (self.functions.items) |slot| {
-            if (slot.value) |func| switch (func) {
+        for (self.functions.items) |*maybe_f| {
+            if (maybe_f.*) |f| switch (f) {
                 .closure => |closure| self.alloc.free(closure.upvalues),
                 .c_function => {},
                 .native => {},
@@ -135,15 +129,27 @@ pub const FunctionPool = struct {
             self.alloc.free(proto.const_local_bits);
         }
         self.functions.deinit(self.alloc);
+        self.function_marks.deinit();
+        self.function_dead.deinit(self.alloc);
         self.prototypes.deinit(self.alloc);
         self.upvalues.deinit(self.alloc);
+        self.upvalue_marks.deinit();
+        self.upvalue_dead.deinit(self.alloc);
     }
 
     pub fn create(self: *FunctionPool, func: Function) !mem.FunctionID {
-        return try revo.allocSlot(FunctionSlot, mem.FunctionID, self.alloc, &self.functions, &self.free_head, .{ .value = func });
+        if (self.function_dead.pop()) |id| {
+            self.functions.items[id] = func;
+            return id;
+        }
+        const id: mem.FunctionID = @intCast(self.functions.items.len);
+        try self.functions.append(self.alloc, func);
+        if (id >= self.function_marks.capacity()) {
+            try self.function_marks.resize(self.functions.items.len, false);
+        }
+        return id;
     }
 
-    // dupes ownership name upbalue specs const locals dont forget to free at call site
     pub fn createPrototype(self: *FunctionPool, proto: Prototype) !PrototypeID {
         const const_bits_len = if (proto.const_local_bits.len != 0)
             proto.const_local_bits.len
@@ -191,13 +197,21 @@ pub const FunctionPool = struct {
     }
 
     pub fn createUpvalue(self: *FunctionPool, upvalue: Upvalue) !UpvalueID {
-        return try revo.allocSlot(UpvalueSlot, UpvalueID, self.alloc, &self.upvalues, &self.upvalue_free_head, .{ .value = upvalue });
+        if (self.upvalue_dead.pop()) |id| {
+            self.upvalues.items[id] = upvalue;
+            return id;
+        }
+        const id: UpvalueID = @intCast(self.upvalues.items.len);
+        try self.upvalues.append(self.alloc, upvalue);
+        if (id >= self.upvalue_marks.capacity()) {
+            try self.upvalue_marks.resize(self.upvalues.items.len, false);
+        }
+        return id;
     }
 
     pub fn get(self: *FunctionPool, id: mem.FunctionID) !*Function {
         if (id >= self.functions.items.len) return error.FunctionDNE;
-        const slot = &self.functions.items[id];
-        if (slot.value) |*func| return func;
+        if (self.functions.items[id]) |*f| return f;
         return error.FunctionDNE;
     }
 
@@ -208,17 +222,15 @@ pub const FunctionPool = struct {
 
     pub fn getUpvalue(self: *FunctionPool, id: UpvalueID) !*Upvalue {
         if (id >= self.upvalues.items.len) return error.FunctionDNE;
-        const slot = &self.upvalues.items[id];
-        if (slot.value) |*upvalue| return upvalue;
+        if (self.upvalues.items[id]) |*u| return u;
         return error.FunctionDNE;
     }
 
     pub fn mark(self: *FunctionPool, id: mem.FunctionID, vm: *revo.VM) void {
         if (id >= self.functions.items.len) return;
-        const slot = &self.functions.items[id];
-        if (slot.value) |*func| {
-            if (slot.marked) return;
-            slot.marked = true;
+        if (self.function_marks.isSet(id)) return;
+        if (self.functions.items[id]) |*func| {
+            self.function_marks.set(id);
             switch (func.*) {
                 .closure => |closure| {
                     for (closure.upvalues) |upvalue_id| {
@@ -232,45 +244,58 @@ pub const FunctionPool = struct {
 
     pub fn markUpvalue(self: *FunctionPool, id: UpvalueID, vm: *revo.VM) void {
         if (id >= self.upvalues.items.len) return;
-        const slot = &self.upvalues.items[id];
-        if (slot.value) |*upvalue| {
-            if (slot.marked) return;
-            slot.marked = true;
+        if (self.upvalue_marks.isSet(id)) return;
+        if (self.upvalues.items[id]) |*upvalue| {
+            self.upvalue_marks.set(id);
             if (upvalue.open_index == null) vm.markData(upvalue.closed);
         }
     }
 
     pub fn sweep(self: *FunctionPool) void {
-        revo.sweepSlots(FunctionSlot, mem.FunctionID, &self.functions, &self.free_head, self, FunctionPool.finalizeFunctionSlot);
-        revo.sweepSlots(UpvalueSlot, UpvalueID, &self.upvalues, &self.upvalue_free_head, self, FunctionPool.finalizeUpvalueSlot);
-    }
-
-    fn finalizeFunctionSlot(slot: *FunctionSlot, self: *FunctionPool) void {
-        if (slot.value) |func| {
-            switch (func) {
-                .closure => |closure| self.alloc.free(closure.upvalues),
-                .native, .c_function => {},
+        {
+            const max_dead = self.functions.items.len;
+            self.function_dead.ensureTotalCapacity(self.alloc, max_dead) catch return;
+            self.function_dead.items.len = 0;
+            for (self.functions.items, 0..) |*maybe_f, idx| {
+                if (maybe_f.* == null) continue;
+                if (self.function_marks.isSet(idx)) continue;
+                switch (maybe_f.*.?) {
+                    .closure => |closure| self.alloc.free(closure.upvalues),
+                    .native, .c_function => {},
+                }
+                maybe_f.* = null;
+                self.function_dead.appendAssumeCapacity(@intCast(idx));
             }
+            self.function_marks.unmanaged.unsetAll();
+        }
+        {
+            const max_dead = self.upvalues.items.len;
+            self.upvalue_dead.ensureTotalCapacity(self.alloc, max_dead) catch return;
+            self.upvalue_dead.items.len = 0;
+            for (self.upvalues.items, 0..) |*maybe_u, idx| {
+                if (maybe_u.* == null) continue;
+                if (self.upvalue_marks.isSet(idx)) continue;
+                maybe_u.* = null;
+                self.upvalue_dead.appendAssumeCapacity(@intCast(idx));
+            }
+            self.upvalue_marks.unmanaged.unsetAll();
         }
     }
 
-    fn finalizeUpvalueSlot(_: *UpvalueSlot, _: *FunctionPool) void {}
-
     pub fn bytes(self: *const FunctionPool) usize {
         var total: usize = 0;
-        for (self.functions.items) |slot| {
-            if (slot.value) |*func| {
-                total += 48; // base
-                switch (func.*) {
-                    .closure => |closure| total += @sizeOf(UpvalueID) * closure.upvalues.len, // upvalue array
+        for (self.functions.items) |maybe_f| {
+            if (maybe_f) |f| {
+                total += 48;
+                switch (f) {
+                    .closure => |closure| total += @sizeOf(UpvalueID) * closure.upvalues.len,
                     .native, .c_function => {},
                 }
             }
         }
-        for (self.upvalues.items) |slot| {
-            if (slot.value != null)
-                total += 24; // upvalue
-
+        for (self.upvalues.items) |maybe_u| {
+            if (maybe_u != null)
+                total += 24;
         }
         return total;
     }

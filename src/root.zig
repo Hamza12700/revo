@@ -116,48 +116,6 @@ pub const path_utils = struct {
     }
 };
 
-pub fn allocSlot(
-    comptime Slot: type,
-    comptime Id: type,
-    alloc: std.mem.Allocator,
-    slots: *std.ArrayList(Slot),
-    free_head: *?Id,
-    value: Slot,
-) !Id {
-    if (free_head.*) |id| {
-        const slot = &slots.items[id];
-        free_head.* = slot.next_free;
-        slot.* = value;
-        return id;
-    }
-
-    const id: Id = @intCast(slots.items.len);
-    try slots.append(alloc, value);
-    return id;
-}
-
-pub fn sweepSlots(
-    comptime Slot: type,
-    comptime Id: type,
-    slots: *std.ArrayList(Slot),
-    free_head: *?Id,
-    ctx: anytype,
-    comptime finalize: fn (*Slot, @TypeOf(ctx)) void,
-) void {
-    for (slots.items, 0..) |*slot, idx| {
-        if (slot.value == null) continue;
-
-        if (slot.marked) {
-            slot.marked = false;
-        } else {
-            finalize(slot, ctx);
-            slot.value = null;
-            slot.next_free = free_head.*;
-            free_head.* = @as(Id, @intCast(idx));
-        }
-    }
-}
-
 /// guaranteed IDs
 pub const core_atoms = enum(AtomID) {
     nil,

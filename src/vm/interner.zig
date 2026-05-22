@@ -10,24 +10,21 @@ const memory = @import("memory.zig");
 
 pub const Interner = @This();
 
-pub const Slot = struct {
-    value: ?[]u8 = null,
-    marked: bool = false,
-    next_free: ?memory.StringID = null,
-};
-
 alloc: std.mem.Allocator,
-slots: std.ArrayList(Slot),
+slots: std.ArrayList(?[]u8),
+marks: std.DynamicBitSet,
+dead: std.ArrayList(memory.StringID),
 by_name: std.StringHashMap(memory.StringID),
-free_head: ?memory.StringID = null,
 
 pub fn init(alloc: std.mem.Allocator) !Interner {
     var self = Interner{
         .alloc = alloc,
-        .slots = try std.ArrayList(Slot).initCapacity(
+        .slots = try std.ArrayList(?[]u8).initCapacity(
             alloc,
             @typeInfo(revo.core_atoms).@"enum".fields.len,
         ),
+        .marks = try std.DynamicBitSet.initEmpty(alloc, 64),
+        .dead = try std.ArrayList(memory.StringID).initCapacity(alloc, 0),
         .by_name = std.StringHashMap(memory.StringID).init(alloc),
     };
     inline for (@typeInfo(revo.core_atoms).@"enum".fields) |field| {
@@ -37,22 +34,26 @@ pub fn init(alloc: std.mem.Allocator) !Interner {
 }
 
 pub fn deinit(self: *Interner) void {
-    for (self.slots.items) |slot| {
-        if (slot.value) |s| self.alloc.free(s);
+    for (self.slots.items) |*maybe_s| {
+        if (maybe_s.*) |s| self.alloc.free(s);
     }
     self.by_name.deinit();
     self.slots.deinit(self.alloc);
+    self.marks.deinit();
+    self.dead.deinit(self.alloc);
 }
 
 fn insert(self: *Interner, owned: []u8) !memory.StringID {
-    return try revo.allocSlot(
-        Slot,
-        memory.StringID,
-        self.alloc,
-        &self.slots,
-        &self.free_head,
-        .{ .value = owned },
-    );
+    if (self.dead.pop()) |id| {
+        self.slots.items[id] = owned;
+        return id;
+    }
+    const id: memory.StringID = @intCast(self.slots.items.len);
+    try self.slots.append(self.alloc, owned);
+    if (id >= self.marks.capacity()) {
+        try self.marks.resize(self.slots.items.len, false);
+    }
+    return id;
 }
 
 pub fn own(self: *Interner, value: []const u8) !memory.StringID {
@@ -80,39 +81,41 @@ pub fn lookup(self: *const Interner, value: []const u8) ?memory.StringID {
 
 pub fn get(self: *const Interner, id: memory.StringID) ![]const u8 {
     if (id >= self.slots.items.len) return error.InvalidString;
-    const slot = self.slots.items[id];
-    return slot.value orelse error.InvalidString;
+    return self.slots.items[id] orelse error.InvalidString;
 }
 
 pub fn getAssumeAlive(self: *const Interner, id: memory.StringID) []const u8 {
-    return self.slots.items[id].value.?;
+    return self.slots.items[id].?;
 }
 
 pub fn mark(self: *Interner, id: memory.StringID) void {
     if (id >= self.slots.items.len) return;
-    const slot = &self.slots.items[id];
-    if (slot.value != null) slot.marked = true;
+    if (self.slots.items[id] != null) self.marks.set(id);
 }
 
 pub fn sweep(self: *Interner) void {
-    revo.sweepSlots(Slot, memory.StringID, &self.slots, &self.free_head, self, Interner.finalizeSlot);
-}
-
-fn finalizeSlot(slot: *Slot, self: *Interner) void {
-    if (slot.value) |s| {
+    const max_dead = self.slots.items.len;
+    self.dead.ensureTotalCapacity(self.alloc, max_dead) catch return;
+    self.dead.items.len = 0;
+    for (self.slots.items, 0..) |*maybe_s, idx| {
+        const s = maybe_s.* orelse continue;
+        if (self.marks.isSet(idx)) continue;
         _ = self.by_name.remove(s);
         self.alloc.free(s);
+        maybe_s.* = null;
+        self.dead.appendAssumeCapacity(@intCast(idx));
     }
+    self.marks.unmanaged.unsetAll();
 }
 
 pub fn contains(self: *Interner, id: memory.StringID) bool {
-    return id < self.slots.items.len and self.slots.items[id].value != null;
+    return id < self.slots.items.len and self.slots.items[id] != null;
 }
 
 pub fn bytes(self: *const Interner) usize {
     var total: usize = 0;
-    for (self.slots.items) |slot| {
-        if (slot.value) |s| {
+    for (self.slots.items) |maybe_s| {
+        if (maybe_s) |s| {
             total += 24;
             total += s.len;
         }
