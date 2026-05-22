@@ -473,24 +473,24 @@ fn struct_new(args: []const Data, vm: *VM) !NativeResult {
 
     const descriptor = try vm.tables.get(descriptor_id);
 
-    const fields_id = switch (descriptor.getRaw(.{ .atom = try vm.internAtom("__fields") }) orelse return .other("invalid struct descriptor")) {
+    const fields_id = switch (descriptor.getRaw(.{ .atom = revo.core_atoms.atom_id(.__fields) }) orelse return .other("invalid struct descriptor")) {
         .table => |id| id,
         else => return .other("invalid struct descriptor, fields has to be a table!"),
     };
 
-    const defaults_id = switch (descriptor.getRaw(.{ .atom = try vm.internAtom("__defaults") }) orelse
+    const defaults_id = switch (descriptor.getRaw(.{ .atom = revo.core_atoms.atom_id(.__defaults) }) orelse
         return .other("invalid struct descriptor, no defaults!")) {
         .table => |id| id,
         else => return .other("invalid struct descriptor"),
     };
 
-    const types_id = switch (descriptor.getRaw(.{ .atom = try vm.internAtom("__types") }) orelse
+    const types_id = switch (descriptor.getRaw(.{ .atom = revo.core_atoms.atom_id(.__types) }) orelse
         return .other("invalid struct descriptor, no types!")) {
         .table => |id| id,
         else => return .other("invalid struct descriptor"),
     };
 
-    const name = switch (descriptor.getRaw(.{ .atom = try vm.internAtom("__name") }) orelse
+    const name = switch (descriptor.getRaw(.{ .atom = revo.core_atoms.atom_id(.__name) }) orelse
         return .other("invalid struct descriptor")) {
         .string => |id| vm.stringValue(id),
         else => "<struct>",

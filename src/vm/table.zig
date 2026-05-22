@@ -190,8 +190,7 @@ pub const Table = struct {
     }
 
     fn structName(mt: *Table, vm: *revo.VM) ![]const u8 {
-        const name_atom = try vm.internAtom("__name");
-        return switch (mt.getRaw(.{ .atom = name_atom }) orelse revo.core_atoms.data(.nil)) {
+        return switch (mt.getRaw(.{ .atom = revo.core_atoms.atom_id(.__name) }) orelse revo.core_atoms.data(.nil)) {
             .string => |id| vm.stringValue(id),
             else => "<struct>",
         };
@@ -200,7 +199,7 @@ pub const Table = struct {
     pub fn structFieldIndex(self: *const Table, vm: *revo.VM, field_atom: memory.AtomID) !?usize {
         const mt_id = self.metatable orelse return null;
         const mt = try vm.tables.get(mt_id);
-        const fields_data = mt.getRaw(.{ .atom = try vm.internAtom("__fields") }) orelse return null;
+        const fields_data = mt.getRaw(.{ .atom = revo.core_atoms.atom_id(.__fields) }) orelse return null;
         const fields_id = switch (fields_data) {
             .table => |id| id,
             else => return null,
@@ -222,10 +221,8 @@ pub const Table = struct {
         const mt_id = self.metatable.?;
         const mt = try vm.tables.get(mt_id);
 
-        const fields_atom = try vm.internAtom("__fields");
-        const types_atom = try vm.internAtom("__types");
         // struct instances are table backed with descriptor as mt
-        if (mt.getRaw(.{ .atom = fields_atom })) |fields_data| {
+        if (mt.getRaw(.{ .atom = revo.core_atoms.atom_id(.__fields) })) |fields_data| {
             const fields_id = switch (fields_data) {
                 .table => |id| id,
                 else => return error.TypeError,
@@ -246,7 +243,7 @@ pub const Table = struct {
                 return error.Panic;
             };
 
-            if (mt.getRaw(.{ .atom = types_atom })) |types_data| {
+            if (mt.getRaw(.{ .atom = revo.core_atoms.atom_id(.__types) })) |types_data| {
                 if (types_data == .table) {
                     const types = try vm.tables.get(types_data.table);
                     if (types.getRaw(field_key)) |expected| {
@@ -373,7 +370,7 @@ pub const Table = struct {
         try writer.writeAll("{ ");
         const has_struct_fields = if (self.metatable) |mt_id| blk: {
             const mt = try vm.tables.get(mt_id);
-            break :blk mt.getRaw(.{ .atom = try vm.internAtom("__fields") }) != null;
+            break :blk mt.getRaw(.{ .atom = revo.core_atoms.atom_id(.__fields) }) != null;
         } else false;
         const should_write_idx = self.hash_entries.count() != 0 and !has_struct_fields;
         for (self.array.items, 0..) |val, idx| {

@@ -676,7 +676,6 @@ fn closeUpvalues(self: *VM, from_index: usize) !void {
         const upvalue = try self.functions.getUpvalue(entry.id);
         if (upvalue.open_index) |slot_index| {
             upvalue.closed = self.currentFiber().slots.items[slot_index];
-            _ = self.const_globals.remove(slot_index);
             upvalue.open_index = null;
         }
         _ = open.pop();
@@ -1016,10 +1015,9 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
         // check if this is a struct desc (has __fields key)
         const table_id = callee.table;
         const table = try self.tables.get(table_id);
-        if (table.getRaw(.{ .atom = try self.internAtom("__fields") })) |_| {
+        if (table.getRaw(.{ .atom = revo.core_atoms.atom_id(.__fields) })) |_| {
             // if so call @struct_new
-            const struct_new_atom = try self.internAtom("@struct_new");
-            if (self.globals.get(struct_new_atom)) |struct_new_fn| {
+            if (self.globals.get(revo.core_atoms.atom_id(.@"@struct_new"))) |struct_new_fn| {
                 const args_start = callee_slot + 1;
                 const args_end = args_start + argc;
                 try self.ensureAbsoluteSlot(args_end);
@@ -1565,8 +1563,8 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
 
         // specialized comparison opcodes for int (no metamethods, no type conversion)
         inline .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => |op| {
-            const lhs_val = try self.readRegister(instr.b);
-            const rhs_val = try self.readRegister(instr.c);
+            const lhs_val = self.readRegisterFast(base, instr.b);
+            const rhs_val = self.readRegisterFast(base, instr.c);
             if (self.debug_assert_types) {
                 std.debug.assert(lhs_val == .number);
                 std.debug.assert(rhs_val == .number);
@@ -1585,13 +1583,13 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 .gte_int => lhs_int >= rhs_int,
                 else => unreachable,
             };
-            try self.writeRegister(instr.a, Data.new.boolean(result));
+            try self.writeRegisterFast(base, instr.a, Data.new.boolean(result));
         },
 
         // specialized comparison opcodes for float (no metamethods)
         inline .eq_float, .neq_float, .lt_float, .gt_float, .lte_float, .gte_float => |op| {
-            const lhs_val = try self.readRegister(instr.b);
-            const rhs_val = try self.readRegister(instr.c);
+            const lhs_val = self.readRegisterFast(base, instr.b);
+            const rhs_val = self.readRegisterFast(base, instr.c);
             if (self.debug_assert_types) {
                 std.debug.assert(lhs_val == .number);
                 std.debug.assert(rhs_val == .number);
@@ -1607,7 +1605,7 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 .gte_float => lhs >= rhs,
                 else => unreachable,
             };
-            try self.writeRegister(instr.a, Data.new.boolean(result));
+            try self.writeRegisterFast(base, instr.a, Data.new.boolean(result));
         },
 
         .@"and" => try self.writeRegisterFast(
@@ -1740,8 +1738,7 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             const value = self.readRegisterFast(base, instr.c);
             if (table.metatable) |mt_id| {
                 const mt = try self.tables.get(mt_id);
-                // TODO: make it a core atom
-                if (mt.getRaw(.{ .atom = try self.internAtom("__fields") })) |fields_data| {
+                if (mt.getRaw(.{ .atom = revo.core_atoms.atom_id(.__fields) })) |fields_data| {
                     if (fields_data == .table) {
                         const fields = try self.tables.get(fields_data.table);
                         if (instr.bx < fields.hash_order.items.len) {
@@ -1865,29 +1862,29 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             // R[b]   = current
             // R[b+1] = step
             // R[b+2] = limit
-            const current = (try self.readRegister(instr.b)).as_number() catch return error.TypeError;
-            const step = (try self.readRegister(instr.b + 1)).as_number() catch return error.TypeError;
-            const limit = (try self.readRegister(instr.b + 2)).as_number() catch return error.TypeError;
+            const current = (self.readRegisterFast(base, instr.b)).as_number() catch return error.TypeError;
+            const step = (self.readRegisterFast(base, instr.b + 1)).as_number() catch return error.TypeError;
+            const limit = (self.readRegisterFast(base, instr.b + 2)).as_number() catch return error.TypeError;
 
             const has_next = (step > 0 and current < limit) or (step < 0 and current > limit);
 
             // out: r[a]=value, r[c]=index (if c!=0), r[bx]=has_next
-            try self.writeRegister(instr.a, Data.new.num(current));
+            try self.writeRegisterFast(base, instr.a, Data.new.num(current));
 
             if (instr.c != 0) {
-                const index_reg = try self.readRegister(instr.c);
+                const index_reg = self.readRegisterFast(base, instr.c);
                 const index = if (index_reg == .number) index_reg.number else 0.0;
-                try self.writeRegister(instr.c, Data.new.num(index));
+                try self.writeRegisterFast(base, instr.c, Data.new.num(index));
             }
             try self.writeRegister(@intCast(instr.bx), Data.new.boolean(has_next));
 
             // advance state if there is a next iteration
             if (has_next) {
-                try self.writeRegister(instr.b, Data.new.num(current + step));
+                try self.writeRegisterFast(base, instr.b, Data.new.num(current + step));
                 if (instr.c != 0) {
-                    const index_reg = try self.readRegister(instr.c);
+                    const index_reg = self.readRegisterFast(base, instr.c);
                     const index = if (index_reg == .number) index_reg.number else 0.0;
-                    try self.writeRegister(instr.c, Data.new.num(index + 1));
+                    try self.writeRegisterFast(base, instr.c, Data.new.num(index + 1));
                 }
             }
         },

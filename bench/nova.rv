@@ -3,7 +3,7 @@ print("a perfect number equals the sum of its proper divisors; N = 20000\n")
 let start = time.now()
 let found: int = 0
 let num: int = 1
-while num < 5000 do
+while num < 20001 do
     let sum: int = 0
     for j in 1..num do
         if num % j == 0
