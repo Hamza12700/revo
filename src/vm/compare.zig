@@ -76,7 +76,7 @@ fn evalImpl(vm: *VM, lhs: Data, rhs: Data, instr: Instruction, comptime op: Opco
     if (l_tag != r_tag) {
         switch (op) {
             .eq, .neq => {
-                try vm.writeRegister(instr.a, Data.new.boolean(op == .eq));
+                try vm.writeRegister(instr.a, Data.new.boolean(op == .neq));
                 return;
             },
             else => {

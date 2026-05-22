@@ -1610,6 +1610,22 @@ test "match guard prevents match" {
     , 2);
 }
 
+test "match guard really prevents match" {
+    try t.top_number(
+        \\ let n = 0
+        \\ for i in 0..7 do
+        \\   let status = if i == 5
+        \\     :done
+        \\   else i
+        \\ 
+        \\   match status
+        \\   | v when v == :done n += 1
+        \\ end
+        \\ 
+        \\ n
+    , 1);
+}
+
 test "match patterns" {
     try t.top_number(
         \\ const x = (:ok, 42)
