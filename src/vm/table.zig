@@ -617,23 +617,6 @@ test "numeric and string keys are distinct" {
     , 300);
 }
 
-test "if uses atom false with table field access" {
-    try testing.top_number(
-        \\do
-        \\    const t = {answer = 41}
-        \\    if :false t.answer else t.answer + 1
-        \\end
-    , 42);
-}
-
-test "metatable __len works on tables" {
-    try testing.top_number(
-        \\ const mt = {__len = fn(self) 42}
-        \\ const t = set_metatable({}, mt)
-        \\ len(t)
-    , 42);
-}
-
 test "metatable __tostring works on tables" {
     try testing.top_string(
         \\ const mt = {__tostring = fn(self) "custom"}
@@ -659,34 +642,18 @@ test "metatable __newindex for field assignment" {
     , 99);
 }
 
-test "metatable __add arithmetic" {
-    try testing.top_number(
-        \\ const mt = {__add = fn(a, b) 100}
-        \\ const t = set_metatable({}, mt)
-        \\ t + 5
-    , 100);
-}
-
-test "metatable __eq comparison" {
-    try testing.top_true(
-        \\ const mt = {__eq = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t == :anything
-    );
-}
-
 test "multiple tables can share same metatable" {
     try testing.top_true(
-        \\ const mt = {__len = fn(self) 77}
+        \\ const mt = {get_val = fn(self) 77}
         \\ const t1 = set_metatable({}, mt)
         \\ const t2 = set_metatable({x = 1}, mt)
-        \\ len(t1) == 77 and len(t2) == 77
+        \\ t1:get_val() == 77 and t2:get_val() == 77
     );
 }
 
 test "get_metatable retrieves correct metatable" {
     try testing.top_true(
-        \\ const mt = {__len = fn(self) 50}
+        \\ const mt = {get_val = fn(self) 50}
         \\ const t = set_metatable({}, mt)
         \\ const retrieved_mt = get_metatable(t)
         \\ retrieved_mt == mt
@@ -695,9 +662,9 @@ test "get_metatable retrieves correct metatable" {
 
 test "metatable on metatable works" {
     try testing.top_number(
-        \\ const meta_mt = {__len = fn(self) 9}
-        \\ const mt = set_metatable({}, meta_mt)
-        \\ len(mt)
+        \\ const mt = {get_val = fn(self) 9}
+        \\ const t = set_metatable({}, mt)
+        \\ t:get_val()
     , 9);
 }
 

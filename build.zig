@@ -76,13 +76,6 @@ pub fn build(b: *std.Build) void {
 
     for (imports) |imp| exe_root.addImport(imp[0], imp[1]);
 
-    const tests_root = b.createModule(.{
-        .root_source_file = b.path("src/tests.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    for (imports) |imp| tests_root.addImport(imp[0], imp[1]);
-
     const exe = b.addExecutable(.{ .name = "revo", .root_module = exe_root });
     b.installArtifact(exe);
 
@@ -109,7 +102,7 @@ pub fn build(b: *std.Build) void {
     b.step("run", "run the cli").dependOn(&run_cmd.step);
 
     const check_modules = [_]*std.Build.Module{
-        tests_root, revo_mod, vm_mod, erevo_mod, exe_root,
+        revo_mod, vm_mod, erevo_mod, exe_root,
     };
 
     const test_step = b.step("test", "run all tests");

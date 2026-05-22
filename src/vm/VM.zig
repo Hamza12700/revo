@@ -329,7 +329,7 @@ pub fn currentResult(self: *VM) Data {
     return fiber.result;
 }
 
-pub fn mainResult(self: *VM) Data {
+pub inline fn mainResult(self: *VM) Data {
     const fiber = self.mainFiber();
     if (fiber.slots.items.len > 0) return fiber.slots.items[fiber.slots.items.len - 1];
     return fiber.result;
@@ -937,17 +937,7 @@ pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
     return failure;
 }
 
-pub fn callBinaryMetamethodByAtom(self: *VM, a: Data, b: Data, atom: mem.AtomID) !?Data {
-    if (try self.getMetamethodByAtom(a, atom)) |mm| {
-        self.perf.metamethod_calls += 1;
-        return try self.callFunction(mm, &.{ a, b });
-    }
-    if (try self.getMetamethodByAtom(b, atom)) |mm| {
-        self.perf.metamethod_calls += 1;
-        return try self.callFunction(mm, &.{ a, b });
-    }
-    return null;
-}
+
 
 pub fn getMetamethodByAtom(self: *VM, val: Data, atom: mem.AtomID) !?Data {
     const mt_id = try self.getMetatableId(val) orelse return null;
@@ -1367,8 +1357,15 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? + rnum.?));
                 return;
             }
-            if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__add))) |result| {
-                try self.writeRegisterFast(base, instr.a, result);
+            if (lhs == .string and rhs == .string) {
+                const lstr = self.stringValue(lhs.string);
+                const rstr = self.stringValue(rhs.string);
+                var buf = try std.ArrayList(u8).initCapacity(self.runtime.alloc, lstr.len + rstr.len);
+                errdefer buf.deinit(self.runtime.alloc);
+                try buf.appendSlice(self.runtime.alloc, lstr);
+                try buf.appendSlice(self.runtime.alloc, rstr);
+                const result_str = try self.adoptDataString(try buf.toOwnedSlice(self.runtime.alloc));
+                try self.writeRegisterFast(base, instr.a, result_str);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot add {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
@@ -1384,10 +1381,6 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? - rnum.?));
                 return;
             }
-            if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__sub))) |result| {
-                try self.writeRegisterFast(base, instr.a, result);
-                return;
-            }
             try self.setRuntimeMessageFmt("cannot subtract {s} from {s}", .{ revo.std_lib.dataToString(rhs), revo.std_lib.dataToString(lhs) });
             return error.IncompatibleTypes;
         },
@@ -1401,7 +1394,6 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? * rnum.?));
                 return;
             }
-            // String * number or number * string: repeat string
             if (lhs == .string and rnum != null) {
                 const str = self.stringValue(lhs.string);
                 const count: usize = @intCast(std.math.clamp(@as(i64, @intFromFloat(rnum.?)), 0, std.math.maxInt(i32)));
@@ -1428,10 +1420,6 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.writeRegisterFast(base, instr.a, result_str);
                 return;
             }
-            if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__mul))) |result| {
-                try self.writeRegisterFast(base, instr.a, result);
-                return;
-            }
             try self.setRuntimeMessageFmt("cannot multiply {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
             return error.IncompatibleTypes;
         },
@@ -1447,10 +1435,6 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 try self.writeRegisterFast(base, instr.a, Data.new.num(lnum.? / rv));
                 return;
             }
-            if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__div))) |result| {
-                try self.writeRegisterFast(base, instr.a, result);
-                return;
-            }
             try self.setRuntimeMessageFmt("cannot divide {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
             return error.IncompatibleTypes;
         },
@@ -1464,10 +1448,6 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
                 const rv = rnum.?;
                 if (rv == 0) return error.DivisionByZero;
                 try self.writeRegisterFast(base, instr.a, Data.new.num(@mod(lnum.?, rv)));
-                return;
-            }
-            if (try self.callBinaryMetamethodByAtom(lhs, rhs, revo.core_atoms.atom_id(.__mod))) |result| {
-                try self.writeRegisterFast(base, instr.a, result);
                 return;
             }
             try self.setRuntimeMessageFmt("cannot mod {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
@@ -2022,7 +2002,6 @@ pub const setMetatable = lookup.setMetatable;
 pub const setTableMetatable = lookup.setTableMetatable;
 pub const setStructInstanceTable = lookup.setStructInstanceTable;
 pub const runModule = module.runModule;
-pub const metamethodTruthy = lookup.metamethodTruthy;
 
 // gc
 pub fn markData(self: *VM, data: Data) void {

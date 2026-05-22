@@ -203,11 +203,11 @@ pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
     self.channels.deinit();
 }
 
-pub fn currentFiber(self: *@This()) *Fiber {
+pub inline fn currentFiber(self: *@This()) *Fiber {
     return &self.fibers.items[self.current_fiber];
 }
 
-pub fn mainFiber(self: *@This()) *Fiber {
+pub inline fn mainFiber(self: *@This()) *Fiber {
     return &self.fibers.items[0];
 }
 

@@ -402,15 +402,12 @@ pub fn debug_(args: []const Data, vm: *VM) !NativeResult {
 /// > len(arg0: any) -> number|nil
 /// returns length of string or table
 /// for strings: byte length, for tables: array part length
-/// uses __len metamethod if available
 pub fn len_(args: []const Data, vm: *VM) !NativeResult {
-    const mm = try vm.getMetamethod(args[0], "__len");
-    if (mm) |m| return call_unary_metamethod(m, args[0], vm);
-
     return switch (args[0]) {
         .string => |id| .okData(Data.new.num(vm.stringValue(id).len)),
         .table => |id| .okData(Data.new.num((try vm.tables.get(id)).array.items.len)),
-        else => .errType(0, "string or table", typeof(args[0])),
+        .tuple => |id| .okData(Data.new.num((try vm.tuples.get(id)).items.len)),
+        else => .errType(1, "string, table, or tuple", typeof(args[0])),
     };
 }
 

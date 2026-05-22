@@ -28,8 +28,8 @@ pub fn register(vm: *VM) !void {
         .{ .key = .{ .named = "contains?" }, .func = root.define(&.{ .string, .string }, contains) },
         .{ .key = .{ .named = "index_of" }, .func = root.define(&.{ .string, .string }, index_of) },
         .{ .key = .{ .core = .__index }, .func = root.define(&.{ .string, .number }, index_f) },
-        .{ .key = .{ .core = .__add }, .func = root.define(&.{ .string, .string }, add_f) },
-        .{ .key = .{ .core = .__mul }, .func = root.define(&.{ .string, .number }, mul_f) },
+        .{ .key = .{ .named = "add" }, .func = root.define(&.{ .string, .string }, add_f) },
+        .{ .key = .{ .named = "mul" }, .func = root.define(&.{ .string, .number }, mul_f) },
         .{ .key = .{ .core = .__tostring }, .func = root.define(&.{.string}, tostring_f) },
         // those should work on string
         .{ .key = .{ .named = "map" }, .func = root.define(&.{ .any, .function }, iter.map_fn) },

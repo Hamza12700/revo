@@ -20,10 +20,10 @@ pub fn register(vm: *VM) !void {
         .{ .key = .{ .named = "find" }, .func = root.define(&.{ .any, .function }, iter.find_fn) },
         .{ .key = .{ .named = "all?" }, .func = root.define(&.{ .any, .function }, iter.all_fn) },
         .{ .key = .{ .named = "any?" }, .func = root.define(&.{ .any, .function }, iter.any_fn) },
-        .{ .key = .{ .core = .__len }, .func = root.define(&[_]root.TypeSpec{.tuple}, len) },
+        .{ .key = .{ .named = "len" }, .func = root.define(&[_]root.TypeSpec{.tuple}, len) },
         .{ .key = .{ .core = .__index }, .func = root.define(&[_]root.TypeSpec{ .tuple, .number }, index) },
-        .{ .key = .{ .core = .__add }, .func = root.define(&[_]root.TypeSpec{ .tuple, .tuple }, add) },
-        .{ .key = .{ .core = .__mul }, .func = root.define(&[_]root.TypeSpec{ .tuple, .number }, mul) },
+        .{ .key = .{ .named = "add" }, .func = root.define(&[_]root.TypeSpec{ .tuple, .tuple }, add) },
+        .{ .key = .{ .named = "mul" }, .func = root.define(&[_]root.TypeSpec{ .tuple, .number }, mul) },
         .{ .key = .{ .core = .__tostring }, .func = root.define(&[_]root.TypeSpec{.tuple}, _tostring) },
         .{ .key = .{ .core = .__debug }, .func = root.define(&[_]root.TypeSpec{.tuple}, _debug) },
     }, Data.new.tuple(std.math.maxInt(usize)));

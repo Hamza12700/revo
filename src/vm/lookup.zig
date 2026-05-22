@@ -202,16 +202,3 @@ pub fn getMetatable(self: *VM, val: Data) !?*revo.table.Table {
 pub fn getMetamethod(self: *VM, val: Data, name: []const u8) !?Data {
     return self.getMetamethodByAtom(val, try self.internAtom(name));
 }
-
-pub fn metamethodTruthy(self: *VM, a: Data, b: Data, primary: []const u8, fallback: ?[]const u8, negate: bool) !?bool {
-    if (try self.callBinaryMetamethodByAtom(a, b, try self.internAtom(primary))) |result| {
-        return !revo.isFalse(result);
-    }
-    if (fallback) |name| {
-        if (try self.callBinaryMetamethodByAtom(a, b, try self.internAtom(name))) |result| {
-            const value = !revo.isFalse(result);
-            return if (negate) !value else value;
-        }
-    }
-    return null;
-}

@@ -27,7 +27,7 @@ pub fn get_metatable_(args: []const Data, vm: *VM) !NativeResult {
 /// > set_metatable(tbl: table, meta: table) -> table
 /// returns table with the mt set
 ///     t = {}
-///     mt = {__len = fn() 42}
+///     mt = {get_val = fn() 42}
 ///     set_metatable(t, mt)
 pub fn set_metatable_(args: []const Data, vm: *VM) !NativeResult {
     const mt = switch (args[1]) {
@@ -47,7 +47,6 @@ fn check_field(name: []const u8, table: *revo.table.Table, vm: *VM) !bool {
     return !revo.isFalse((try table.get(try vm.ownDataString(name), vm)) orelse Data.new.nil());
 }
 
-// comparison metamethods
 test "all lens" {
     try testing.top_number("len({ 1, 2, 3, 8 }) + len(\"asdf\")", 8);
 }

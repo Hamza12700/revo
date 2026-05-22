@@ -136,19 +136,6 @@ test "tuple destructuring" {
     try testing.top_true(":true");
 }
 
-test "tuple metamethods" {
-    try testing.top_number(
-        \\ const t = (10, 20)
-        \\ const both = t + (30,)
-        \\ len(both)
-    , 3);
-    try testing.top_string(
-        \\ const t = (10, 20)
-        \\ const both = t + (30,)
-        \\ tostring(both)
-    , "(10, 20, 30)");
-}
-
 test "tuple length" {
     try testing.top_number(
         \\ const t = (1, 2, 3, 4, 5)

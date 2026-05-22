@@ -316,19 +316,6 @@ test "field assignment works" {
     );
 }
 
-test "script metatable closures work through natives" {
-    try t.top_number(
-        \\ const mt = {__len = fn(self) 42}
-        \\ const t = set_metatable({}, mt)
-        \\ len(t)
-    , 42);
-    try t.top_string(
-        \\ const mt = {__tostring = fn(self) "bag"}
-        \\ const t = set_metatable({}, mt)
-        \\ tostring(t)
-    , "bag");
-}
-
 test "meatballs are distinct" {
     try t.top_string(
         \\ const a = set_metatable({}, {__tostring = fn(self) "foo"})
@@ -340,62 +327,6 @@ test "meatballs are distinct" {
         \\ const a = set_metatable(:true, {__tostring = fn(self) "foo"})
         \\ tostring(1 == 1)
     , "foo");
-}
-
-test "arithmetic metamethods __add __sub __mul __div" {
-    try t.top_number(
-        \\ const mt = {__add = fn(a, b) 100}
-        \\ const t = set_metatable({}, mt)
-        \\ t + 5
-    , 100);
-    try t.top_number(
-        \\ const mt = {__sub = fn(a, b) 200}
-        \\ const t = set_metatable({}, mt)
-        \\ t - 3
-    , 200);
-    try t.top_number(
-        \\ const mt = {__mul = fn(a, b) 300}
-        \\ const t = set_metatable({}, mt)
-        \\ t * 2
-    , 300);
-    try t.top_number(
-        \\ const mt = {__div = fn(a, b) 400}
-        \\ const t = set_metatable({}, mt)
-        \\ t / 4
-    , 400);
-}
-
-test "comparison metamethods __eq __ne __lt __gt __lte __gte" {
-    try t.top_true(
-        \\ const mt = {__eq = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t == 5
-    );
-    try t.top_true(
-        \\ const mt = {__ne = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t != 5
-    );
-    try t.top_true(
-        \\ const mt = {__lt = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t < 5
-    );
-    try t.top_true(
-        \\ const mt = {__gt = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t > 5
-    );
-    try t.top_true(
-        \\ const mt = {__lte = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t <= 5
-    );
-    try t.top_true(
-        \\ const mt = {__gte = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t >= 5
-    );
 }
 
 test "string conversion metamethods __tostring" {
@@ -423,69 +354,6 @@ test "display formatting uses __display and falls back to __tostring" {
         \\ const t = set_metatable({}, mt)
         \\ fmt("%v", t)
     , "fallback");
-}
-
-test "length metamethod __len" {
-    try t.top_number(
-        \\ const mt = {__len = fn(self) 99}
-        \\ const t = set_metatable({}, mt)
-        \\ len(t)
-    , 99);
-    try t.top_number(
-        \\ const mt = {__len = fn(self) 5}
-        \\ const t = set_metatable({x = 1, y = 2}, mt)
-        \\ len(t)
-    , 5);
-}
-
-test "metamethods receive correct arguments" {
-    try t.top_number(
-        \\ const mt = {__add = fn(a, b) if b == :second 123 else 0}
-        \\ const t = set_metatable({}, mt)
-        \\ t + :second
-    , 123);
-}
-
-test "metatable on metatable works" {
-    try t.top_number(
-        \\ const meta_mt = {__len = fn(self) 9}
-        \\ const mt = set_metatable({}, meta_mt)
-        \\ len(mt)
-    , 9);
-}
-
-test "get_metatable retrieves correct metatable" {
-    try t.top_true(
-        \\ const mt = {__len = fn(self) 50}
-        \\ const t = set_metatable({}, mt)
-        \\ const retrieved_mt = get_metatable(t)
-        \\ retrieved_mt == mt
-    );
-}
-
-test "metamethod with tuple self parameter" {
-    try t.top_number(
-        \\ const mt = {__len = fn(self) 10}
-        \\ const t = set_metatable((1, 2, 3), mt)
-        \\ len(t)
-    , 10);
-}
-
-test "multiple tables can share same metatable" {
-    try t.top_true(
-        \\ const mt = {__len = fn(self) 77}
-        \\ const t1 = set_metatable({}, mt)
-        \\ const t2 = set_metatable({x = 1}, mt)
-        \\ len(t1) == 77 and len(t2) == 77
-    );
-}
-
-test "metatable metamethods don't shadow table operations" {
-    try t.top_number(
-        \\ const mt = {__len = fn(self) 100}
-        \\ const t = set_metatable({a = 1, b = 2}, mt)
-        \\ (t.a) + (t.b)
-    , 3);
 }
 
 test "metamethod __index for field access" {
@@ -582,32 +450,6 @@ test "non-table values can use plain metatable fields as methods" {
         \\ set_metatable("", mt)
         \\ "asdf":reverse()
     , "fdsa");
-}
-
-test "builtin functions respect metamethods" {
-    try t.top_true(
-        \\ const mt = {__eq = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t == :anything
-    );
-    try t.top_true(
-        \\ const mt = {__lt = fn(a, b) 1}
-        \\ const t = set_metatable({}, mt)
-        \\ t < :anything
-    );
-}
-
-test "metamethods work with mixed types" {
-    try t.top_number(
-        \\ const mt = {__add = fn(a, b) 500}
-        \\ const t = set_metatable({}, mt)
-        \\ t + "string"
-    , 500);
-    try t.top_number(
-        \\ const mt = {__add = fn(a, b) 600}
-        \\ const t = set_metatable({}, mt)
-        \\ t + (1, 2, 3)
-    , 600);
 }
 
 //

@@ -1,18 +1,13 @@
-/// comparison spec (ordered)
+/// comparison spec
 ///
-/// 1. primary metamethod __eq/__ne/__lt/__gt/__lte/__gte
-/// 2. fallbacks, if primary fails:
-///    - neq falls back to __eq (negated)
-///    - lte falls back to __lt(rhs, lhs) (negated, i.e. !(rhs < lhs))
-///    - gte falls back to __lt(lhs, rhs) (negated, i.e. !(lhs < rhs))
-/// 3. type check, if tags differ:
+/// 1. type check — if tags differ:
 ///    - eq/neq return false/true respectively
 ///    - ordered ops (< > <= >=) throw typeerror with message
-/// 4. same-type:
+/// 2. same-type:
 ///    - atoms/functions/tables: identity only, eq/neq compare ids, ordered ops crash
 ///    - numbers
 ///    - strings: lexicographic byte-order comparison
-///    - tuples: recursive (for nested tuples) lexicographic element-wise comparison. length breaks ties
+///    - tuples: recursive (for nested tuples) lexicographic element-wise comparison, length breaks ties
 const std = @import("std");
 const revo = @import("revo");
 const Data = @import("memory.zig").Data;
@@ -56,9 +51,6 @@ pub fn compare(vm: *VM, lh: Data, rh: Data) std.math.Order {
         return std.math.order(l_tuple.items.len, r_tuple.items.len);
     }
 
-    // unreachable for ordered ops on these types (caught by supports_order check in eval)
-    // for eq/neq, eval handles identity directly, so this path is technically dead code
-    // but kept for completeness/safety if compare is called elsewhere
     return .gt;
 }
 
@@ -72,36 +64,6 @@ pub inline fn eval(vm: *VM, instr: Instruction, comptime op: Opcode) VM.EvalErro
 
     const lhs = try vm.readRegister(instr.b);
     const rhs = try vm.readRegister(instr.c);
-    const lookup = @import("lookup.zig");
-
-    // try primary metamethod
-    const primary_mm = switch (op) {
-        .eq => "__eq",
-        .neq => "__ne",
-        .lt => "__lt",
-        .gt => "__gt",
-        .lte => "__lte",
-        .gte => "__gte",
-        else => unreachable,
-    };
-
-    if (try lookup.metamethodTruthy(vm, lhs, rhs, primary_mm, null, false)) |res| {
-        try vm.writeRegister(instr.a, Data.new.boolean(res));
-        return;
-    }
-
-    // try fallback mms
-    const fallback_res = switch (op) {
-        .neq => if (try lookup.metamethodTruthy(vm, lhs, rhs, "__eq", null, false)) |r| !r else null,
-        .lte => if (try lookup.metamethodTruthy(vm, rhs, lhs, "__lt", null, false)) |r| !r else null,
-        .gte => if (try lookup.metamethodTruthy(vm, lhs, rhs, "__lt", null, false)) |r| !r else null,
-        else => null,
-    };
-
-    if (fallback_res) |res| {
-        try vm.writeRegister(instr.a, Data.new.boolean(res));
-        return;
-    }
 
     // type check
     const l_tag = std.meta.activeTag(lhs);

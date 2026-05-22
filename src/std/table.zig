@@ -39,8 +39,8 @@ pub fn register(vm: *VM) !void {
         .{ .key = .{ .named = "contains?" }, .func = root.define(&.{ .table, .any }, contains) },
         .{ .key = .{ .named = "unique" }, .func = root.define(&.{.table}, unique) },
         .{ .key = .{ .named = "sum" }, .func = root.define(&.{.table}, sum) },
-        .{ .key = .{ .core = .__len }, .func = root.define(&.{.table}, len) },
-        .{ .key = .{ .core = .__add }, .func = root.define(&.{ .table, .table }, tableAdd) },
+        .{ .key = .{ .named = "len" }, .func = root.define(&.{.table}, len) },
+        .{ .key = .{ .named = "add" }, .func = root.define(&.{ .table, .table }, tableAdd) },
         .{ .key = .{ .core = .__tostring }, .func = root.define(&.{.table}, tostring) },
         .{ .key = .{ .core = .__debug }, .func = root.define(&.{.table}, debug) },
         // from iter.zig
