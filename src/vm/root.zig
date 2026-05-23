@@ -11,6 +11,7 @@ pub const opcode = @import("opcode.zig");
 pub const Instruction = opcode.Instruction;
 pub const Opcode = opcode.Opcode;
 pub const table = @import("table.zig");
+pub const print = @import("print.zig");
 pub const testing = @import("testing.zig");
 pub const tests = @import("tests.zig");
 pub const tuple = @import("tuple.zig");

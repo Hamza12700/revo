@@ -377,30 +377,7 @@ pub const Table = struct {
     }
 
     pub fn write(self: *Table, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) anyerror!void {
-        try writer.writeAll("{ ");
-        const has_struct_fields = if (self.metatable) |mt_id| blk: {
-            const mt = try vm.tables.get(mt_id);
-            break :blk mt.getRaw(Data.new.atom(revo.core_atoms.atom_id(.__fields))) != null;
-        } else false;
-        const should_write_idx = self.hash_entries.count() != 0 and !has_struct_fields;
-        for (self.array.items, 0..) |val, idx| {
-            if (should_write_idx) {
-                try Data.new.num(idx).write(writer, vm, mode);
-                try writer.writeAll(": ");
-            }
-            try val.write(writer, vm, mode);
-            try writer.writeAll(", ");
-        }
-        for (self.hash_order.items) |key| {
-            const val = self.hash_entries.get(key) orelse continue;
-            if (should_write_idx) {
-                try key.write(writer, vm, mode);
-                try writer.writeAll(": ");
-            }
-            try val.write(writer, vm, mode);
-            try writer.writeAll(", ");
-        }
-        try writer.writeAll("}");
+        return revo.vm.print.writeTable(self, writer, vm, mode);
     }
 };
 

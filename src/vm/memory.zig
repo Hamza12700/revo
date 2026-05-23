@@ -140,48 +140,7 @@ pub const Data = struct {
     }
 
     pub fn write(self: Data, writer: *std.Io.Writer, vm: *revo.VM, mode: RenderMode) anyerror!void {
-        if (mode == .debug) {
-            if (try vm.getMetamethod(self, "__debug")) |mm| {
-                const result = if (mm.isFunction()) try vm.callFunction(mm, &.{self}) else return error.TypeError;
-                if (result.asString()) |id| {
-                    try writer.writeAll(vm.stringValue(id));
-                    return;
-                }
-                return error.TypeError;
-            }
-        }
-
-        switch (self.tag()) {
-            .number => try writer.print("{}", .{self.asNumber().?}),
-            .string => switch (mode) {
-                .display => try writer.writeAll(vm.stringValue(self.asString().?)),
-                .debug => try writer.print("\"{s}\"", .{vm.stringValue(self.asString().?)}),
-            },
-            .atom => try writer.print(":{s}", .{vm.atomName(self.asAtom().?)}),
-            .function => {
-                const id = self.asFunction().?;
-                const f = try vm.functions.get(id);
-                switch (f.*) {
-                    .native => try writer.print("#fn(){}/{}", .{ id, f.arity() }),
-                    .c_function => |cf| try writer.print("${s}@{}()/{}", .{ cf.name, id, f.arity() }),
-                    .closure => try writer.print("{s}()/{d}", .{ f.name(), f.arity() }),
-                }
-            },
-            .table => {
-                const table = vm.tables.get(self.asTable().?) catch {
-                    try writer.writeAll("<dead-table>");
-                    return;
-                };
-                table.write(writer, vm, mode) catch try writer.writeAll("<table-unprintable>");
-            },
-            .tuple => {
-                const tuple = vm.tuples.get(self.asTuple().?) catch {
-                    try writer.writeAll("<dead-tuple>");
-                    return;
-                };
-                tuple.write(writer, vm, mode) catch try writer.writeAll("<tuple-unprintable>");
-            },
-        }
+        return revo.vm.print.writeData(self, writer, vm, mode);
     }
 
     pub fn print(self: Data, vm: *revo.VM) void {

@@ -19,14 +19,8 @@ pub const Tuple = struct {
         return self.items.len;
     }
 
-    pub fn write(self: *Tuple, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) !void {
-        try writer.writeAll("(");
-        for (self.items, 0..) |item, i| {
-            if (i != 0) try writer.writeAll(", ");
-            try item.write(writer, vm, mode);
-        }
-        if (self.items.len == 1) try writer.writeAll(",");
-        try writer.writeAll(")");
+    pub fn write(self: *Tuple, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) anyerror!void {
+        return revo.vm.print.writeTuple(self, writer, vm, mode);
     }
 };
 
