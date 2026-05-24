@@ -132,42 +132,85 @@ pub const Session = struct {
             return true;
         }
 
-        // always append input; let lexer handle comments
-        try self.source_acc.appendSlice(self.gpa, line);
-        try self.source_acc.append(self.gpa, '\n');
+        const snip_len = line.len + 1;
+        var snip_mem = try self.gpa.alloc(u8, snip_len);
+        @memcpy(snip_mem[0..line.len], line);
+        snip_mem[line.len] = '\n';
+        const snippet = snip_mem[0..snip_len];
 
-        const build_result = revo.lang.build(self.vm, .{ .name = "<repl>", .text = self.source_acc.items }, .{}) catch |err| {
+        const snip_build = revo.lang.build(self.vm, .{ .name = "<repl>", .text = snippet }, .{}) catch |err| {
+            self.gpa.free(snip_mem);
             try out.print("repl build error: {}\n", .{err});
             return true;
         };
-        const artifact = switch (build_result) {
-            .ok => |ok| ok,
-            .err => |err| {
-                try self.printBuildError(out, err);
+
+        switch (snip_build) {
+            .ok => |artifact| {
+                defer self.gpa.free(snip_mem);
+                defer self.gpa.free(artifact.instructions);
+                defer self.gpa.free(artifact.spans);
+
+                self.vm.setProgramDebugInfo(artifact.spans, snippet, "<repl>") catch {};
+
+                const run_result = revo.module.runCompiledSessionReport(self.vm, "<repl>", artifact.instructions) catch |err| {
+                    try out.print("runtime error: {}\n", .{err});
+                    self.clear();
+                    return true;
+                };
+
+                switch (run_result) {
+                    .ok => try self.printResult(out),
+                    .err => |failure| {
+                        try self.printRuntimeFailure(out, failure);
+                        self.clear();
+                        return true;
+                    },
+                }
+
                 return true;
             },
-        };
-        defer self.gpa.free(artifact.instructions);
-        defer self.gpa.free(artifact.spans);
+            .err => {
+                self.gpa.free(snip_mem);
+                try self.source_acc.appendSlice(self.gpa, line);
+                try self.source_acc.append(self.gpa, '\n');
 
-        self.vm.setProgramDebugInfo(artifact.spans, self.source_acc.items, "<repl>") catch {};
+                const build_result = revo.lang.build(self.vm, .{ .name = "<repl>", .text = self.source_acc.items }, .{}) catch |build_err| {
+                    try out.print("repl build error: {}\n", .{build_err});
+                    return true;
+                };
+                const artifact = switch (build_result) {
+                    .ok => |ok| ok,
+                    .err => |err2| {
+                        try self.printBuildError(out, err2);
+                        return true;
+                    },
+                };
+                defer self.gpa.free(artifact.instructions);
+                defer self.gpa.free(artifact.spans);
 
-        const run_result = revo.module.runCompiledSessionReport(self.vm, "<repl>", artifact.instructions) catch |err| {
-            try out.print("runtime error: {}\n", .{err});
-            self.clear();
-            return true;
-        };
+                self.vm.setProgramDebugInfo(artifact.spans, self.source_acc.items, "<repl>") catch {};
 
-        switch (run_result) {
-            .ok => try self.printResult(out),
-            .err => |failure| {
-                try self.printRuntimeFailure(out, failure);
-                self.clear();
+                const run_result = revo.module.runCompiledSessionReport(self.vm, "<repl>", artifact.instructions) catch |run_err| {
+                    try out.print("runtime error: {}\n", .{run_err});
+                    self.clear();
+                    return true;
+                };
+
+                switch (run_result) {
+                    .ok => {
+                        self.source_acc.clearRetainingCapacity();
+                        try self.printResult(out);
+                    },
+                    .err => |failure| {
+                        try self.printRuntimeFailure(out, failure);
+                        self.clear();
+                        return true;
+                    },
+                }
+
                 return true;
             },
         }
-
-        return true;
     }
 };
 
