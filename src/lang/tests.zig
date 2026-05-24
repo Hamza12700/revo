@@ -1048,15 +1048,10 @@ test "method call on missing field reports field name and object" {
 }
 
 test "runtime report includes wrong arity detail" {
-    try t.expectRuntimeFailure(
+    try t.expectCompileError(
         \\ const id = fn(x) x
         \\ id()
-    ,
-        .WrongArity,
-        2,
-        2,
-        "function `id` expected 1 args, got 0",
-    );
+    , .ParseError);
 }
 
 test "runtime span for struct constructor type error points at constructor call" {

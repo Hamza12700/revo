@@ -364,7 +364,6 @@ pub const Compiler = struct {
     }
 
     pub fn compileCall(self: *Compiler, expr: *const Node, call: anytype) InternalLowerError!void {
-        _ = expr;
         switch (call.callee.expr) {
             .field => |field| {
                 const desugared = call.args.len > 0 and call.args[0] == field.object;
@@ -389,7 +388,7 @@ pub const Compiler = struct {
                 try emit.emit(self, .call_field, @intCast(argc));
             },
             .ident => |fn_name| {
-                try validateCallArgs(self, fn_name, call.args);
+                try validateCallArgs(self, expr, fn_name, call.args);
                 try self.compile(call.callee, true);
                 for (call.args) |arg| try self.compile(arg, true);
                 // emit call_closure when callee has a known signature; enables a direct-closure fast-path
@@ -442,9 +441,58 @@ pub const Compiler = struct {
         return true;
     }
 
-    fn validateCallArgs(self: *Compiler, fn_name: []const u8, args: []const *Node) !void {
+    fn validateCallArgs(self: *Compiler, call_expr: *const Node, fn_name: []const u8, args: []const *Node) !void {
         const fn_state = state_mod.currentFunctionState(self) orelse return;
         const sig = fn_state.fn_signatures.get(fn_name) orelse return;
+        
+        if (args.len < sig.param_types.len) {
+            var expected_types = try std.ArrayList([]const u8).initCapacity(self.alloc, sig.param_types.len);
+            defer expected_types.deinit(self.alloc);
+            for (sig.param_types) |maybe_type| {
+                try expected_types.append(self.alloc, maybe_type orelse "any");
+            }
+            
+            var actual_types = try std.ArrayList([]const u8).initCapacity(self.alloc, args.len);
+            defer actual_types.deinit(self.alloc);
+            for (args) |arg| try actual_types.append(self.alloc, types.typeName(type_check.inferExprType(self, arg)));
+            
+            const expected_sig = try formatCallSignature(self.alloc, fn_name, expected_types.items);
+            defer self.alloc.free(expected_sig);
+            const actual_sig = try formatCallSignature(self.alloc, fn_name, actual_types.items);
+            defer self.alloc.free(actual_sig);
+            
+            const msg = try std.fmt.allocPrint(
+                self.alloc,
+                "call to `{s}` expects {d} argument(s), got {d}\n  got: {s}\n want: {s}",
+                .{ fn_name, sig.param_types.len, args.len, actual_sig, expected_sig },
+            );
+            return self.fail(.ParseError, call_expr, msg);
+        }
+        
+        if (args.len > sig.param_types.len) {
+            var expected_types = try std.ArrayList([]const u8).initCapacity(self.alloc, sig.param_types.len);
+            defer expected_types.deinit(self.alloc);
+            for (sig.param_types) |maybe_type| {
+                try expected_types.append(self.alloc, maybe_type orelse "any");
+            }
+            
+            var actual_types = try std.ArrayList([]const u8).initCapacity(self.alloc, args.len);
+            defer actual_types.deinit(self.alloc);
+            for (args) |arg| try actual_types.append(self.alloc, types.typeName(type_check.inferExprType(self, arg)));
+            
+            const expected_sig = try formatCallSignature(self.alloc, fn_name, expected_types.items);
+            defer self.alloc.free(expected_sig);
+            const actual_sig = try formatCallSignature(self.alloc, fn_name, actual_types.items);
+            defer self.alloc.free(actual_sig);
+            
+            const msg = try std.fmt.allocPrint(
+                self.alloc,
+                "call to `{s}` expects {d} argument(s), got {d}\n  got: {s}\n want: {s}",
+                .{ fn_name, sig.param_types.len, args.len, actual_sig, expected_sig },
+            );
+            return self.fail(.ParseError, call_expr, msg);
+        }
+        
         const min_args = @min(sig.param_types.len, args.len);
         var i: usize = 0;
         while (i < min_args) : (i += 1) {

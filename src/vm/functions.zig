@@ -354,22 +354,22 @@ test "functions return exactly one value" {
 }
 
 test "functions reject wrong arity" {
-    try t.expectRuntimeError(
+    try t.expectCompileError(
         \\ const id = fn(x) x
         \\ id()
-    , .WrongArity);
-    try t.expectRuntimeError(
+    , .ParseError);
+    try t.expectCompileError(
         \\ const forty_two = fn() 42
         \\ forty_two(1)
-    , .WrongArity);
-    try t.expectRuntimeError(
+    , .ParseError);
+    try t.expectCompileError(
         \\ const all = fn(a, b, c) a + b * c
         \\ all(1, 2)
-    , .WrongArity);
-    try t.expectRuntimeError(
+    , .ParseError);
+    try t.expectCompileError(
         \\ const all = fn(a, b, c) a + b * c
         \\ all(1, 2, 3, 4)
-    , .WrongArity);
+    , .ParseError);
 }
 
 test "function pool prototype ownership and upvalue slot reuse" {
