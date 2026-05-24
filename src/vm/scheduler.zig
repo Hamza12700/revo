@@ -237,7 +237,7 @@ pub inline fn enqueueRunnable(self: *@This(), fid: FiberID) !void {
         const old_cap = self.ring_buf.len;
         const new_cap = old_cap * 2;
         const new_buf = try self.alloc.alloc(FiberID, new_cap);
-        const count = self.ring_tail - self.ring_head;
+        const count = if (self.ring_tail >= self.ring_head) self.ring_tail - self.ring_head else self.ring_tail + old_cap - self.ring_head;
         if (self.ring_head + count <= old_cap) {
             @memcpy(new_buf[0..count], self.ring_buf[self.ring_head..][0..count]);
         } else {
