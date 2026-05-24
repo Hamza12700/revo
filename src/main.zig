@@ -75,6 +75,20 @@ fn runMain(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
 
     if (args.len < 2) {
+        const stdin_file = std.Io.File.stdin();
+        if (!try stdin_file.isTty(init.io)) {
+            const source = std.Io.Dir.cwd().readFileAlloc(init.io, "/dev/stdin", arena, std.Io.Limit.unlimited) catch |err| {
+                printError(init, "reading stdin - {}", .{err});
+                return error.FileError;
+            };
+
+            const cfg: Config = .{};
+            var vm = try initVM(init, init.gpa, &.{args[0]});
+            defer vm.deinit();
+            try runSource(init, init.gpa, "<stdin>", source, cfg);
+            return;
+        }
+
         var vm = try initVM(init, init.gpa, &.{args[0]});
         defer vm.deinit();
         try repl.run(&vm, init.gpa, init);
@@ -82,6 +96,61 @@ fn runMain(init: std.process.Init) !void {
     }
 
     const config = try parseArgs(init, args);
+
+    // if script path `-` then explicit stdin;
+    // else if no script path and stdin is pipe, read stdin then run
+    if (config.script_path) |path| {
+        if (std.mem.eql(u8, path, "-")) {
+            const source = std.Io.Dir.cwd().readFileAlloc(init.io, "/dev/stdin", arena, std.Io.Limit.unlimited) catch |err| {
+                printError(init, "reading stdin - {}", .{err});
+                return error.FileError;
+            };
+
+            if (std.mem.endsWith(u8, path, ".rvo")) {
+                // should never happen for `-`, but keep parity
+                try runBytecode(init, init.gpa, "<stdin>", source, config);
+            } else {
+                switch (config.mode) {
+                    .run => try runSource(init, init.gpa, "<stdin>", source, config),
+                    .bench => try benchSource(init, init.gpa, "<stdin>", source, config),
+                    .compile => try compileToBytecode(init, init.gpa, init.arena.allocator(), "<stdin>", source, config),
+                    .disassemble => {
+                        var vm = try initVM(init, init.gpa, config.argv);
+                        defer vm.deinit();
+                        const artifact = try compileSource(init, &vm, init.gpa, "<stdin>", source, config.test_mode);
+                        defer init.gpa.free(artifact.instructions);
+                        defer init.gpa.free(artifact.spans);
+                        printDisassembly(artifact, source, false);
+                    },
+                }
+            }
+            if (!config.interactive) return;
+        }
+    } else {
+        const stdout = std.Io.File.stdin();
+        // no script path provided; if stdin is pipe, read it and run
+        if (try stdout.isTty(init.io)) {
+            const source = std.Io.Dir.cwd().readFileAlloc(init.io, "/dev/stdin", arena, std.Io.Limit.unlimited) catch |err| {
+                printError(init, "reading stdin - {}", .{err});
+                return error.FileError;
+            };
+            // run as src
+            switch (config.mode) {
+                .run => try runSource(init, init.gpa, "<stdin>", source, config),
+                .bench => try benchSource(init, init.gpa, "<stdin>", source, config),
+                .compile => try compileToBytecode(init, init.gpa, init.arena.allocator(), "<stdin>", source, config),
+                .disassemble => {
+                    var vm = try initVM(init, init.gpa, config.argv);
+                    defer vm.deinit();
+                    const artifact = try compileSource(init, &vm, init.gpa, "<stdin>", source, config.test_mode);
+                    defer init.gpa.free(artifact.instructions);
+                    defer init.gpa.free(artifact.spans);
+                    printDisassembly(artifact, source, false);
+                },
+            }
+            if (!config.interactive) return;
+        }
+    }
 
     if (config.inline_code) |code| {
         try runInlineCode(init, init.gpa, code, config);
