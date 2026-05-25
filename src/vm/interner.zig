@@ -181,7 +181,11 @@ test "string literals survive source free" {
     defer alloc.free(artifact.spans);
 
     vm.mainFiber().program = artifact.instructions;
-    try vm.run();
+
+    switch (try vm.runReport()) {
+        .err => return error.Failed,
+        .ok => {},
+    }
 
     const value = try vm.pop();
     try std.testing.expect(value.isString());

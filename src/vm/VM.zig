@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const revo = @import("revo");
 const root = @import("root.zig");
 
+pub const MAX_FRAMES = 256;
 pub const ProgramCounter = usize;
 pub const ConstantID = usize;
 
@@ -90,7 +91,12 @@ pub fn runReport(self: *VM) !EvalResult {
         }
         if (has_sleepers) {
             @branchHint(.unlikely);
-            self.schedSleepUntilNextTimer();
+
+            // sleep until next timer
+            const now_ns = self.schedNowMonotonicNs();
+            if (self.sched.nextSleepDelayNs(now_ns)) |diff_ns| {
+                if (diff_ns > 0) std.Io.sleep(self.runtime.io, std.Io.Duration.fromNanoseconds(@intCast(diff_ns)), .awake) catch {};
+            }
             try @call(.always_inline, Scheduler.wakeDueSleepers, .{ &self.sched, self.schedNowMonotonicNs() });
         }
     }
@@ -143,7 +149,7 @@ pub const Fiber = struct {
             .program = program,
             .debug_info_id = null,
             .slots = try std.ArrayList(Data).initCapacity(alloc, 256),
-            .frames = try std.ArrayList(Frame).initCapacity(alloc, 256),
+            .frames = try std.ArrayList(Frame).initCapacity(alloc, MAX_FRAMES),
             .open_upvalues = try std.ArrayList(OpenUpvalueRef).initCapacity(alloc, 8),
             .running = false,
             .state = .ready,
@@ -488,7 +494,7 @@ fn processMarkStack(self: *VM) void {
     self.gc_mark_stack.clearRetainingCapacity();
 }
 
-fn markRoots(self: *VM) void {
+inline fn markRoots(self: *VM) void {
     for (self.sched.fibers.items) |fiber| {
         for (fiber.slots.items) |data| self.pushMark(data);
         for (fiber.frames.items) |frame| {
@@ -651,11 +657,6 @@ pub fn stringValue(self: *VM, id: mem.StringID) []const u8 {
     return self.strings.get(id) catch "<dead>";
 }
 
-fn getConstant(self: *VM, idx: ConstantID) !Data {
-    if (idx >= self.constants.items.len) return error.InvalidConstant;
-    return self.constants.items[idx];
-}
-
 pub fn push(self: *VM, val: Data) !void {
     const fiber = self.currentFiber();
     try fiber.slots.append(self.runtime.alloc, val);
@@ -707,13 +708,6 @@ pub fn schedParkCurrentForSleepMS(self: *VM, ms: u64) !void {
 pub inline fn schedNowMonotonicNs(self: *VM) u64 {
     const ts = std.Io.Clock.awake.now(self.runtime.io);
     return @as(u64, @intCast(ts.toNanoseconds()));
-}
-
-fn schedSleepUntilNextTimer(self: *VM) void {
-    const now_ns = self.schedNowMonotonicNs();
-    if (self.sched.nextSleepDelayNs(now_ns)) |diff_ns| {
-        if (diff_ns > 0) std.Io.sleep(self.runtime.io, std.Io.Duration.fromNanoseconds(@intCast(diff_ns)), .awake) catch {};
-    }
 }
 
 inline fn runReadyFibers(self: *VM) !?EvalFailure {
@@ -819,18 +813,6 @@ pub inline fn regWrite(slots: []Data, base: usize, reg: opcode.Register, value: 
 pub inline fn writeRegisterFast(self: *VM, base: usize, reg: opcode.Register, value: Data) !void {
     const slot = base + reg;
     self.writeRegisterUnsafe(slot, value);
-}
-
-fn copyRegister(self: *VM, dst: opcode.Register, src: opcode.Register) !void {
-    const dst_slot = try self.absoluteRegisterIndex(dst);
-    const src_slot = try self.absoluteRegisterIndex(src);
-    if (src_slot < self.currentFiber().slots.items.len) {
-        try self.ensureAbsoluteSlot(dst_slot);
-        self.currentFiber().slots.items[dst_slot] = self.currentFiber().slots.items[src_slot];
-    } else {
-        try self.ensureAbsoluteSlot(dst_slot);
-        self.currentFiber().slots.items[dst_slot] = revo.core_atoms.data(.missing);
-    }
 }
 
 pub fn internAtom(self: *VM, name: []const u8) !mem.AtomID {
@@ -980,15 +962,6 @@ inline fn currentClosure(self: *VM) !?*root.functions.Closure {
         .closure => |*closure| closure,
         .native, .c_function => null,
     };
-}
-
-fn localIsConst(self: *VM, slot: root.functions.LocalSlot) !bool {
-    const closure = (try self.currentClosure()) orelse return false;
-    const proto = try self.functions.getPrototype(closure.prototype);
-    const idx = slot / 8;
-    if (idx >= proto.const_local_bits.len) return false;
-    const bit: u3 = @intCast(slot % 8);
-    return (proto.const_local_bits[idx] & (@as(u8, 1) << bit)) != 0;
 }
 
 inline fn captureUpvalue(self: *VM, slot_index: usize) !root.functions.UpvalueID {
@@ -1145,11 +1118,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     if (fiber.frames.items.len > caller_frame_depth) {
         while (fiber.frames.items.len > caller_frame_depth) {
             const instr = try self.fetch();
-            if (self.debug.each_instr) std.debug.print("+ {}\n", .{instr});
             try self.evalRegister(instr);
-            if (self.debug.trace) self.trace(instr);
-            if (self.debug.each_stack) self.printStack();
-            if (self.debug.dump) self.dumpStack();
         }
     }
 
@@ -1282,12 +1251,6 @@ pub const EvalError = error{
     ConstantReassignment,
 } || root.functions.NativeError;
 
-fn writeAbsoluteSlot(self: *VM, slot: usize, value: Data) !void {
-    try self.ensureAbsoluteSlot(slot);
-    const fiber = self.currentFiber();
-    fiber.slots.items[slot] = value;
-}
-
 inline fn tableFast(self: *VM, id: mem.TableID) !*root.table.Table {
     if (builtin.mode == .ReleaseFast) {
         std.debug.assert(id < self.tables.tables.items.len);
@@ -1304,79 +1267,6 @@ inline fn functionFast(self: *VM, id: mem.FunctionID) !*root.functions.Function 
         return &self.functions.functions.items[id].?;
     }
     return self.functions.get(id);
-}
-
-inline fn callClosureFast(self: *VM, callee: Data, instr: Instruction, base: usize, callee_slot: usize, argc: usize) EvalError!void {
-    const fiber = self.currentFiber();
-    const closure_id = callee.asFunction().?;
-    const func = try self.functionFast(closure_id);
-
-    switch (func.*) {
-        .closure => |closure| {
-            if (closure.arity != root.functions.VARIADIC and closure.arity != argc) {
-                @branchHint(.unlikely);
-                try self.setRuntimeMessageFmt("function `{s}` expected {d} args, got {d}", .{ closure.name, closure.arity, argc });
-                return error.WrongArity;
-            }
-
-            // Tail call optimization check
-            if (self.host_call_depth == 0 and
-                fiber.pc < fiber.program.len and
-                fiber.program[fiber.pc].op == .ret)
-            {
-                @branchHint(.unlikely);
-                const tail_frame = try self.currentFrame();
-                if (tail_frame.closure_id != null and tail_frame.base > 0) {
-                    const caller_fn_slot = tail_frame.base - 1;
-                    const moved_len = argc + 1;
-                    try self.closeUpvalues(tail_frame.base);
-                    if (callee_slot != caller_fn_slot) {
-                        std.mem.copyForwards(
-                            Data,
-                            fiber.slots.items[caller_fn_slot .. caller_fn_slot + moved_len],
-                            fiber.slots.items[callee_slot .. callee_slot + moved_len],
-                        );
-                    }
-                    tail_frame.base = caller_fn_slot + 1;
-                    tail_frame.call_site_pc = fiber.pc - 1;
-                    tail_frame.closure_id = closure_id;
-                    tail_frame.register_count = closure.register_count;
-                    if (tail_frame.base + closure.register_count > fiber.slots.items.len) {
-                        try fiber.slots.resize(self.runtime.alloc, tail_frame.base + closure.register_count);
-                    }
-                    if (argc < closure.register_count) {
-                        @memset(fiber.slots.items[tail_frame.base + argc .. tail_frame.base + closure.register_count], revo.core_atoms.data(.missing));
-                    }
-                    fiber.pc = closure.addr;
-                    return;
-                }
-            }
-
-            // Normal call path
-            if (fiber.frames.items.len >= 256) return error.StackOverflow;
-
-            const new_base = callee_slot + 1;
-            if (new_base + closure.register_count > fiber.slots.items.len) {
-                try fiber.slots.resize(self.runtime.alloc, new_base + closure.register_count);
-            }
-            if (argc < closure.register_count) {
-                @memset(fiber.slots.items[new_base + argc .. new_base + closure.register_count], revo.core_atoms.data(.missing));
-            }
-            try fiber.frames.append(self.runtime.alloc, .{
-                .return_addr = fiber.pc,
-                .call_site_pc = fiber.pc - 1,
-                .base = new_base,
-                .result_register = instr.c,
-                .register_count = closure.register_count,
-                .closure_id = closure_id,
-            });
-            fiber.pc = closure.addr;
-        },
-        else => {
-            // Fallback to full callRegister for non-closure functions
-            return self.callNonClosureFunction(func.*, instr, base, callee_slot, argc);
-        },
-    }
 }
 
 fn callNonClosureFunction(self: *VM, func: root.functions.Function, instr: Instruction, base: usize, callee_slot: usize, argc: usize) EvalError!void {
@@ -1486,10 +1376,72 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
     else
         revo.core_atoms.data(.missing);
 
-    // Fast path for closures (most common case in recursion)
+    // seemingly the likeliest for both rec and non-rec
     if (callee.tag() == .function) {
         @branchHint(.likely);
-        return self.callClosureFast(callee, instr, base, callee_slot, argc);
+
+        const closure_id = callee.asFunction().?;
+        const func = try self.functionFast(closure_id);
+
+        return switch (func.*) {
+            .closure => |closure| {
+                if (closure.arity != root.functions.VARIADIC and closure.arity != argc) {
+                    @branchHint(.unlikely);
+                    try self.setRuntimeMessageFmt("function `{s}` expected {d} args, got {d}", .{ closure.name, closure.arity, argc });
+                    return error.WrongArity;
+                }
+
+                if (self.host_call_depth == 0 and
+                    fiber.pc < fiber.program.len and
+                    fiber.program[fiber.pc].op == .ret)
+                {
+                    @branchHint(.unlikely);
+                    const tail_frame = try self.currentFrame();
+                    if (tail_frame.closure_id != null and tail_frame.base > 0) {
+                        const caller_fn_slot = tail_frame.base - 1;
+                        const moved_len = argc + 1;
+                        try self.closeUpvalues(tail_frame.base);
+                        if (callee_slot != caller_fn_slot) {
+                            std.mem.copyForwards(
+                                Data,
+                                fiber.slots.items[caller_fn_slot .. caller_fn_slot + moved_len],
+                                fiber.slots.items[callee_slot .. callee_slot + moved_len],
+                            );
+                        }
+                        tail_frame.base = caller_fn_slot + 1;
+                        tail_frame.call_site_pc = fiber.pc - 1;
+                        tail_frame.closure_id = closure_id;
+                        tail_frame.register_count = closure.register_count;
+                        if (tail_frame.base + closure.register_count > fiber.slots.items.len) {
+                            try fiber.slots.resize(self.runtime.alloc, tail_frame.base + closure.register_count);
+                        }
+                        if (argc < closure.register_count) {
+                            @memset(fiber.slots.items[tail_frame.base + argc .. tail_frame.base + closure.register_count], revo.core_atoms.data(.missing));
+                        }
+                        fiber.pc = closure.addr;
+                        return;
+                    }
+                }
+
+                const new_base = callee_slot + 1;
+                if (new_base + closure.register_count > fiber.slots.items.len) {
+                    try fiber.slots.resize(self.runtime.alloc, new_base + closure.register_count);
+                }
+                if (argc < closure.register_count) {
+                    @memset(fiber.slots.items[new_base + argc .. new_base + closure.register_count], revo.core_atoms.data(.missing));
+                }
+                try fiber.frames.append(self.runtime.alloc, .{
+                    .return_addr = fiber.pc,
+                    .call_site_pc = fiber.pc - 1,
+                    .base = new_base,
+                    .result_register = instr.c,
+                    .register_count = closure.register_count,
+                    .closure_id = closure_id,
+                });
+                fiber.pc = closure.addr;
+            },
+            else => self.callNonClosureFunction(func.*, instr, base, callee_slot, argc),
+        };
     }
 
     // try __call mm on non-fn callees
@@ -1636,33 +1588,6 @@ fn structGetInstance(self: *VM, id: revo.vm.struct_mod.StructInstanceID) EvalErr
     };
 }
 
-fn callFieldRegister(self: *VM, instr: Instruction) EvalError!void {
-    const colon = (instr.b & @as(opcode.Register, 1 << 15)) != 0;
-    const explicit_argc: usize = @intCast(instr.b & ~@as(opcode.Register, 1 << 15));
-
-    const object = try self.readRegister(instr.a);
-    const key = try self.readRegister(instr.a + 1);
-    const lookup_result = (try self.resolveField(object, key)) orelse {
-        const key_name = if (key.asAtom()) |atom| self.atomName(atom) else revo.std_lib.dataToString(key);
-        try self.setRuntimeMessageFmt("field `{s}` does not exist on {s}", .{
-            key_name,
-            revo.std_lib.typeof(object),
-        });
-        return error.NotAFunction;
-    };
-
-    if (colon) {
-        try self.writeRegister(instr.a, lookup_result.value);
-        try self.writeRegister(instr.a + 1, object);
-        try self.callRegister(.{ .op = .call, .a = instr.a, .b = @intCast(explicit_argc + 1), .c = instr.c });
-        return;
-    }
-
-    // keep argv continjieuos without shifting: callee in a+1, args already start at a+2
-    try self.writeRegister(instr.a + 1, lookup_result.value);
-    try self.callRegister(.{ .op = .call, .a = instr.a + 1, .b = @intCast(explicit_argc), .c = instr.c });
-}
-
 fn returnRegister(self: *VM, instr: Instruction) EvalError!void {
     const fiber = self.currentFiber();
     const result = regRead(fiber.slots.items, fiber.frames.items[fiber.frames.items.len - 1].base, instr.a);
@@ -1780,7 +1705,10 @@ inline fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             const val = regRead(slots, base, instr.b);
             regWrite(slots, base, instr.a, val);
         },
-        .load_const => regWrite(slots, base, instr.a, try self.getConstant(instr.bx)),
+        .load_const => {
+            if (instr.bx >= self.constants.items.len) return error.InvalidConstant;
+            regWrite(slots, base, instr.a, self.constants.items[instr.bx]);
+        },
         .load_nil => regWrite(slots, base, instr.a, revo.core_atoms.data(.nil)),
         .load_small_int => regWrite(slots, base, instr.a, Data.new.num(@as(i64, @intCast(instr.bx)))),
         .add => {
@@ -2175,7 +2103,14 @@ inline fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             }
         },
         .store_local => {
-            if (try self.localIsConst(instr.a)) return error.ConstantReassignment;
+            if (try self.currentClosure()) |closure| blk: {
+                const proto = try self.functions.getPrototype(closure.prototype);
+                const idx = instr.a / 8;
+                if (idx >= proto.const_local_bits.len) break :blk;
+                const bit: u3 = @intCast(instr.a % 8);
+                if ((proto.const_local_bits[idx] & (@as(u8, 1) << bit)) != 0) return error.ConstantReassignment;
+            }
+
             const dst = base + instr.a;
             const src = base + instr.b;
             if (builtin.mode != .ReleaseFast and src >= slots.len) {
@@ -2209,7 +2144,32 @@ inline fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             try self.storeUpvalueData(closure.upvalues[instr.bx], regRead(slots, base, instr.a));
         },
         .call => try self.callRegister(instr),
-        .call_field => try self.callFieldRegister(instr),
+        .call_field => {
+            const colon = (instr.b & @as(opcode.Register, 1 << 15)) != 0;
+            const explicit_argc: usize = @intCast(instr.b & ~@as(opcode.Register, 1 << 15));
+
+            const object = try self.readRegister(instr.a);
+            const key = try self.readRegister(instr.a + 1);
+            const lookup_result = (try self.resolveField(object, key)) orelse {
+                const key_name = if (key.asAtom()) |atom| self.atomName(atom) else revo.std_lib.dataToString(key);
+                try self.setRuntimeMessageFmt("field `{s}` does not exist on {s}", .{
+                    key_name,
+                    revo.std_lib.typeof(object),
+                });
+                return error.NotAFunction;
+            };
+
+            if (colon) {
+                try self.writeRegister(instr.a, lookup_result.value);
+                try self.writeRegister(instr.a + 1, object);
+                try self.callRegister(.{ .op = .call, .a = instr.a, .b = @intCast(explicit_argc + 1), .c = instr.c });
+                return;
+            }
+
+            // keep argv continjieuos without shifting: callee in a+1, args already start at a+2
+            try self.writeRegister(instr.a + 1, lookup_result.value);
+            try self.callRegister(.{ .op = .call, .a = instr.a + 1, .b = @intCast(explicit_argc), .c = instr.c });
+        },
         .ret => try self.returnRegister(instr),
         .spawn => try self.spawnRegister(instr),
         .join => {
