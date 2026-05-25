@@ -2814,6 +2814,48 @@ test "type: return type validation accepts correct type" {
     , 42);
 }
 
+test "compiler: named parameters basic call" {
+    try t.top_number(
+        \\ const add = fn(x: int, y: int) do x + y end
+        \\ add(x = 5, y = 3)
+    , 8);
+}
+
+test "compiler: named parameters reordered" {
+    try t.top_number(
+        \\ const add = fn(x: int, y: int) do x + y end
+        \\ add(y = 3, x = 5)
+    , 8);
+}
+
+test "compiler: named parameters mixed with positional" {
+    try t.top_number(
+        \\ const add3 = fn(x: int, y: int, z: int) do x + y + z end
+        \\ add3(1, y = 2, z = 3)
+    , 6);
+}
+
+test "compiler: named parameters unknown parameter error" {
+    try t.expectCompileError(
+        \\ const add = fn(x: int, y: int) do x + y end
+        \\ add(x = 5, z = 3)
+    , .ParseError);
+}
+
+test "compiler: named parameters duplicate parameter error" {
+    try t.expectCompileError(
+        \\ const add = fn(x: int, y: int) do x + y end
+        \\ add(x = 5, x = 3)
+    , .ParseError);
+}
+
+test "compiler: named parameters positional after named error" {
+    try t.expectCompileError(
+        \\ const add = fn(x: int, y: int) do x + y end
+        \\ add(x = 5, 3)
+    , .ParseError);
+}
+
 // if/else type validation is disabled behind comptime false
 // enable by changing comptime false to comptime true in flow.zig compileIf
 // test "type: if/else branches with matching types" {

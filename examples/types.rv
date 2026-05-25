@@ -11,8 +11,8 @@
 
 # scalar binds & coercion
 
-const id = fn(x) x * 2
-id(1,2,3)
+const id = fn(x, y) x * 2
+id(1, 2, 3)
 # type A = (:ok, any) | (:err, atom)
 #
 # fn pick(how: A) -> any do

@@ -388,9 +388,19 @@ pub const Compiler = struct {
                 try emit.emit(self, .call_field, @intCast(argc));
             },
             .ident => |fn_name| {
-                try validateCallArgs(self, expr, fn_name, call.args);
+                const reordered_args = try validateCallArgs(self, expr, fn_name, call.args);
                 try self.compile(call.callee, true);
-                for (call.args) |arg| try self.compile(arg, true);
+                // use reordered args if named params were used
+                const args_to_compile = if (reordered_args.ptr != call.args.ptr) reordered_args else call.args;
+                for (args_to_compile) |arg| {
+                    if (arg.expr == .assign_expr) {
+                        // in call context, assignment expressions should only compile their values
+                        try self.compile(arg.expr.assign_expr.value, true);
+                    } else {
+                        try self.compile(arg, true);
+                    }
+                }
+                if (reordered_args.ptr != call.args.ptr) self.alloc.free(reordered_args);
                 // emit call_closure when callee has a known signature; enables a direct-closure fast-path
                 if (state_mod.findFnSignature(self, fn_name) != null) {
                     try emit.emit(self, .call_closure, @intCast(call.args.len + @intFromBool(call.implicit_self)));
@@ -441,78 +451,129 @@ pub const Compiler = struct {
         return true;
     }
 
-    fn validateCallArgs(self: *Compiler, call_expr: *const Node, fn_name: []const u8, args: []const *Node) !void {
-        const fn_state = state_mod.currentFunctionState(self) orelse return;
-        const sig = fn_state.fn_signatures.get(fn_name) orelse return;
-        
-        if (args.len < sig.param_types.len) {
-            var expected_types = try std.ArrayList([]const u8).initCapacity(self.alloc, sig.param_types.len);
-            defer expected_types.deinit(self.alloc);
-            for (sig.param_types) |maybe_type| {
-                try expected_types.append(self.alloc, maybe_type orelse "any");
+    fn isNamedParam(arg: *const Node) ?[]const u8 {
+        if (arg.expr != .assign_expr) return null;
+        const assign = arg.expr.assign_expr;
+        if (assign.target.expr != .ident) return null;
+        return assign.target.expr.ident;
+    }
+
+    fn tryReorderNamedParams(self: *Compiler, args: []const *Node, sig: *const FunctionState.FnSig) ![]const *Node {
+        var has_named = false;
+
+        for (args) |arg| {
+            if (isNamedParam(arg) != null) {
+                has_named = true;
+            } else if (has_named) {
+                const msg = try std.fmt.allocPrint(
+                    self.alloc,
+                    "positional argument cannot follow named argument",
+                    .{},
+                );
+                return self.fail(.ParseError, arg, msg);
             }
-            
-            var actual_types = try std.ArrayList([]const u8).initCapacity(self.alloc, args.len);
-            defer actual_types.deinit(self.alloc);
-            for (args) |arg| try actual_types.append(self.alloc, types.typeName(type_check.inferExprType(self, arg)));
-            
-            const expected_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, expected_types.items);
+        }
+
+        if (!has_named) return args;
+
+        var reordered = try self.alloc.alloc(*Node, args.len);
+        errdefer self.alloc.free(reordered);
+
+        var param_seen = try self.alloc.alloc(bool, sig.param_names.len);
+        defer self.alloc.free(param_seen);
+        for (param_seen) |*p| p.* = false;
+
+        var positional_idx: usize = 0;
+
+        for (args) |arg| {
+            if (isNamedParam(arg)) |param_name| {
+                var found = false;
+                for (sig.param_names, 0..) |sig_name, param_idx| {
+                    if (std.mem.eql(u8, sig_name, param_name)) {
+                        if (param_seen[param_idx]) {
+                            const msg = try std.fmt.allocPrint(
+                                self.alloc,
+                                "parameter `{s}` specified multiple times",
+                                .{param_name},
+                            );
+                            return self.fail(.ParseError, arg, msg);
+                        }
+                        param_seen[param_idx] = true;
+                        reordered[param_idx] = arg;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    const msg = try std.fmt.allocPrint(
+                        self.alloc,
+                        "unknown parameter `{s}` (expected one of: {s})",
+                        .{ param_name, try std.mem.join(self.alloc, ", ", sig.param_names) },
+                    );
+                    return self.fail(.ParseError, arg, msg);
+                }
+            } else {
+                if (positional_idx >= sig.param_names.len) {
+                    const msg = try std.fmt.allocPrint(
+                        self.alloc,
+                        "too many positional arguments",
+                        .{},
+                    );
+                    return self.fail(.ParseError, arg, msg);
+                }
+                reordered[positional_idx] = arg;
+                param_seen[positional_idx] = true;
+                positional_idx += 1;
+            }
+        }
+
+        return reordered;
+    }
+
+    fn validateCallArgs(self: *Compiler, call_expr: *const Node, fn_name: []const u8, args: []const *Node) InternalLowerError![]const *Node {
+        const fn_state = state_mod.currentFunctionState(self) orelse return args;
+        const sig = fn_state.fn_signatures.get(fn_name) orelse return args;
+
+        const reordered_args = try tryReorderNamedParams(self, args, sig);
+
+        if (reordered_args.len != sig.param_types.len) {
+            const expected_types = try self.buildTypesList(sig.param_types);
+            defer self.alloc.free(expected_types);
+
+            const actual_types = try self.buildArgTypesList(reordered_args);
+            defer self.alloc.free(actual_types);
+
+            const expected_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, expected_types);
             defer self.alloc.free(expected_sig);
-            const actual_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names[0..args.len], actual_types.items);
+
+            // Show all actual argument types regardless of parameter count
+            const actual_sig = try formatCallSignatureTypesOnly(self.alloc, fn_name, actual_types);
             defer self.alloc.free(actual_sig);
-            
+
             const msg = try std.fmt.allocPrint(
                 self.alloc,
                 "call to `{s}` expects {d} argument(s), got {d}\n  got: {s}\n want: {s}",
-                .{ fn_name, sig.param_types.len, args.len, actual_sig, expected_sig },
+                .{ fn_name, sig.param_types.len, reordered_args.len, actual_sig, expected_sig },
             );
             return self.fail(.ParseError, call_expr, msg);
         }
-        
-        if (args.len > sig.param_types.len) {
-            var expected_types = try std.ArrayList([]const u8).initCapacity(self.alloc, sig.param_types.len);
-            defer expected_types.deinit(self.alloc);
-            for (sig.param_types) |maybe_type| {
-                try expected_types.append(self.alloc, maybe_type orelse "any");
-            }
-            
-            var actual_types = try std.ArrayList([]const u8).initCapacity(self.alloc, args.len);
-            defer actual_types.deinit(self.alloc);
-            for (args) |arg| try actual_types.append(self.alloc, types.typeName(type_check.inferExprType(self, arg)));
-            
-            const expected_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, expected_types.items);
-            defer self.alloc.free(expected_sig);
-            const actual_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, expected_types.items);
-            defer self.alloc.free(actual_sig);
-            
-            const msg = try std.fmt.allocPrint(
-                self.alloc,
-                "call to `{s}` expects {d} argument(s), got {d}\n  got: {s}\n want: {s}",
-                .{ fn_name, sig.param_types.len, args.len, actual_sig, expected_sig },
-            );
-            return self.fail(.ParseError, call_expr, msg);
-        }
-        
-        const min_args = @min(sig.param_types.len, args.len);
+
+        const min_args = @min(sig.param_types.len, reordered_args.len);
         var i: usize = 0;
         while (i < min_args) : (i += 1) {
             if (sig.param_types[i]) |expected_type| {
-                const actual_type = type_check.inferExprType(self, args[i]);
-                type_check.checkType(self.alloc, type_check.resolveTypeName(self, expected_type), actual_type, args[i].span) catch |err| switch (err) {
-                    error.TypeError => {
-                        var actual_types = try std.ArrayList([]const u8).initCapacity(self.alloc, args.len);
-                        defer actual_types.deinit(self.alloc);
-                        for (args) |arg| try actual_types.append(self.alloc, types.typeName(type_check.inferExprType(self, arg)));
+                const actual_type = type_check.inferExprType(self, reordered_args[i]);
+                type_check.checkType(self.alloc, type_check.resolveTypeName(self, expected_type), actual_type, reordered_args[i].span) catch |err| switch (err) {
+                     error.TypeError => {
+                        const actual_types = try self.buildArgTypesList(reordered_args);
+                        defer self.alloc.free(actual_types);
 
-                        var expected_types_all = try std.ArrayList([]const u8).initCapacity(self.alloc, sig.param_types.len);
-                        defer expected_types_all.deinit(self.alloc);
-                        for (sig.param_types) |maybe_type| {
-                            try expected_types_all.append(self.alloc, maybe_type orelse "any");
-                        }
+                        const expected_types_all = try self.buildTypesList(sig.param_types);
+                        defer self.alloc.free(expected_types_all);
 
-                        const actual_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, actual_types.items);
+                        const actual_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, actual_types);
                         defer self.alloc.free(actual_sig);
-                        const expected_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, expected_types_all.items);
+                        const expected_sig = try formatCallSignatureWithNames(self.alloc, fn_name, sig.param_names, expected_types_all);
                         defer self.alloc.free(expected_sig);
 
                         const msg = try std.fmt.allocPrint(
@@ -520,11 +581,13 @@ pub const Compiler = struct {
                             "argument {d} (`{s}`) to `{s}` expects {s}, got {s}\n  got: {s}\n want: {s}",
                             .{ i + 1, sig.param_names[i], fn_name, expected_type, types.typeName(actual_type), actual_sig, expected_sig },
                         );
-                        return self.fail(.ParseError, args[i], msg);
+                        return self.fail(.ParseError, reordered_args[i], msg);
                     },
                 };
             }
         }
+
+        return reordered_args;
     }
 
     fn formatCallSignature(alloc: std.mem.Allocator, fn_name: []const u8, types_list: []const []const u8) ![]u8 {
@@ -549,6 +612,36 @@ pub const Compiler = struct {
             if (idx > 0) try buf.appendSlice(alloc, ", ");
             try buf.appendSlice(alloc, name);
             try buf.appendSlice(alloc, ": ");
+            try buf.appendSlice(alloc, type_name);
+        }
+        try buf.append(alloc, ')');
+        return try buf.toOwnedSlice(alloc);
+    }
+
+    fn buildTypesList(self: *Compiler, type_opts: []const ?[]const u8) ![]const []const u8 {
+        var list = try std.ArrayList([]const u8).initCapacity(self.alloc, type_opts.len);
+        for (type_opts) |maybe_type| {
+            try list.append(self.alloc, maybe_type orelse "any");
+        }
+        return try list.toOwnedSlice(self.alloc);
+    }
+
+    fn buildArgTypesList(self: *Compiler, args: []const *const Node) ![]const []const u8 {
+        var list = try std.ArrayList([]const u8).initCapacity(self.alloc, args.len);
+        for (args) |arg| {
+            const arg_type = type_check.inferExprType(self, arg);
+            try list.append(self.alloc, types.typeName(arg_type));
+        }
+        return try list.toOwnedSlice(self.alloc);
+    }
+
+    fn formatCallSignatureTypesOnly(alloc: std.mem.Allocator, fn_name: []const u8, types_list: []const []const u8) ![]u8 {
+        var buf = try std.ArrayList(u8).initCapacity(alloc, fn_name.len + types_list.len * 8 + 4);
+        defer buf.deinit(alloc);
+        try buf.appendSlice(alloc, fn_name);
+        try buf.append(alloc, '(');
+        for (types_list, 0..) |type_name, idx| {
+            if (idx > 0) try buf.appendSlice(alloc, ", ");
             try buf.appendSlice(alloc, type_name);
         }
         try buf.append(alloc, ')');

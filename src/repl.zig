@@ -383,7 +383,6 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
         defer init.gpa.free(raw);
         if (!try session.step(writer, raw)) break;
         try writer.flush();
-
     }
 
     if (signal_was_set) _ = signal_c.signal(signal_c.SIGINT, @ptrFromInt(0));
