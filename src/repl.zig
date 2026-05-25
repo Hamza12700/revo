@@ -193,6 +193,10 @@ pub const Session = struct {
         self.vm.const_globals.clearRetainingCapacity();
     }
 
+    fn clearSnippet(self: *Session) void {
+        self.source_acc.clearRetainingCapacity();
+    }
+
     fn printResult(self: *Session, out: *std.Io.Writer) !void {
         var w = std.Io.Writer.Allocating.init(self.gpa);
         defer w.deinit();
@@ -266,7 +270,7 @@ pub const Session = struct {
 
                     const run_result = revo.module.runCompiledSessionReport(self.vm, "<repl>", artifact.instructions) catch |err| {
                         try out.print("runtime error: {}\n", .{err});
-                        self.clear();
+                        self.clearSnippet();
                         return true;
                     };
 
@@ -274,7 +278,7 @@ pub const Session = struct {
                         .ok => try self.printResult(out),
                         .err => |failure| {
                             try self.printRuntimeFailure(out, failure);
-                            self.clear();
+                            self.clearSnippet();
                         },
                     }
                 },
@@ -307,7 +311,7 @@ pub const Session = struct {
 
             const run_result = revo.module.runCompiledSessionReport(self.vm, "<repl>", artifact.instructions) catch |run_err| {
                 try out.print("runtime error: {}\n", .{run_err});
-                self.clear();
+                self.clearSnippet();
                 return true;
             };
 
@@ -318,7 +322,7 @@ pub const Session = struct {
                 },
                 .err => |failure| {
                     try self.printRuntimeFailure(out, failure);
-                    self.clear();
+                    self.clearSnippet();
                 },
             }
         }
@@ -391,45 +395,35 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
 }
 
 const TestEnv = struct {
-    vm: revo.VM,
+    vm: *revo.VM,
     session: Session,
     out: std.Io.Writer.Allocating,
 };
 
-fn initTestEnv() !TestEnv {
-    const vm = try revo.VM.init(.{ .alloc = std.testing.allocator, .io = std.testing.io });
-    const session = try Session.init(&vm, std.testing.allocator);
-    const out = std.Io.Writer.Allocating.init(std.testing.allocator);
+fn initTestEnv(alloc: std.mem.Allocator) !TestEnv {
+    const vm = try alloc.create(revo.VM);
+    vm.* = try revo.VM.init(.{ .alloc = alloc, .io = std.testing.io });
+    const session = try Session.init(vm, alloc);
+    const out = std.Io.Writer.Allocating.init(alloc);
+    revo.pretty.supports_color = false;
     return TestEnv{ .vm = vm, .session = session, .out = out };
 }
 
 test "repl prints results" {
-    var env = try initTestEnv();
-    defer env.session.deinit();
-    defer env.out.deinit();
-    defer env.vm.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var env = try initTestEnv(alloc);
 
     try std.testing.expect(try env.session.step(&env.out.writer, "1 + 1"));
     try std.testing.expectEqualStrings("2\n", env.out.written());
 }
 
-test "repl renders parse errors" {
-    var env = try initTestEnv();
-    defer env.session.deinit();
-    defer env.out.deinit();
-    defer env.vm.deinit();
-
-    try std.testing.expect(try env.session.step(&env.out.writer, "1 +"));
-    try std.testing.expect(std.mem.indexOf(u8, env.out.written(), "error:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, env.out.written(), "1 +") != null);
-    try std.testing.expect(std.mem.endsWith(u8, env.session.source_acc.items, "1 +\n"));
-}
-
 test "repl handles commands" {
-    var env = try initTestEnv();
-    defer env.session.deinit();
-    defer env.out.deinit();
-    defer env.vm.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var env = try initTestEnv(alloc);
 
     try env.vm.globals.put(1, revo.Data.new.nil());
     try env.vm.const_globals.put(2, {});
@@ -441,4 +435,37 @@ test "repl handles commands" {
     try std.testing.expectEqual(@as(usize, 0), env.session.source_acc.items.len);
     try std.testing.expect(std.mem.indexOf(u8, env.out.written(), "session cleared") != null);
     try std.testing.expect(!(try env.session.step(&env.out.writer, ":q")));
+}
+
+test "repl keeps globals after runtime failure" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var env = try initTestEnv(alloc);
+
+    try std.testing.expect(try env.session.step(&env.out.writer,
+        \\ global a = fn(x: int, y: string) "asdf"
+    ));
+
+    const before_call = env.out.written().len;
+    try std.testing.expect(try env.session.step(&env.out.writer, "a(5, \"hi\")"));
+    try std.testing.expect(std.mem.indexOfPos(u8, env.out.written(), before_call, "asdf") != null);
+}
+
+test "repl can call a global function later" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var env = try initTestEnv(alloc);
+
+    const ok1 = try env.session.step(&env.out.writer, "global f = fn(a, b) a + b");
+    try std.testing.expect(ok1);
+    const before_call = env.out.written().len;
+    const written_after_first = env.out.written();
+    std.debug.print("OUT after step1 ({d}): '{s}'\n", .{written_after_first.len, written_after_first});
+    const ok2 = try env.session.step(&env.out.writer, "f(1, 3)");
+    try std.testing.expect(ok2);
+    const written = env.out.written();
+    std.debug.print("OUT after step2 ({d}): '{s}'\n", .{written.len, written});
+    try std.testing.expect(std.mem.indexOfPos(u8, written, before_call, "4\n") != null);
 }

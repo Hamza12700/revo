@@ -1270,7 +1270,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
                 .number => "number",
                 else => @tagName(callee.tag()),
             };
-            try self.setRuntimeMessageFmt("expected function, got {s}", .{got});
+            try self.setRuntimeMessageFmt("cannot call {s} value", .{got});
             return error.NotAFunction;
         },
     };

@@ -8,6 +8,10 @@ const pretty = revo.pretty;
 
 const repl = @import("repl.zig");
 
+test {
+    _ = std.testing.refAllDecls(repl);
+}
+
 const USAGE =
     \\usage: revo [options] [script [args...]]
     \\

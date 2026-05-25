@@ -1033,7 +1033,7 @@ test "runtime report includes not-a-function detail" {
         .NotAFunction,
         1,
         1,
-        "expected function, got number",
+        "cannot call number value",
     );
 }
 
