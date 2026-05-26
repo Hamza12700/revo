@@ -144,6 +144,7 @@ fn walkExpr(
         .mod_expr => |v| alloc(allocator, expr.span, .{ .mod_expr = .{
             .name = v.name,
             .body = try ctx.walk(allocator, v.body, ctx),
+            .is_pub = v.is_pub,
         } }),
         .comp_block => |cb| alloc(allocator, expr.span, .{ .comp_block = .{
             .expr = try ctx.walk(allocator, cb.expr, ctx),
@@ -511,7 +512,7 @@ const AstSubstituter = struct {
                 .import_expr = try self.substitute(i),
             }),
             .mod_expr => |m| try self.alloc(node.span, .{
-                .mod_expr = .{ .name = m.name, .body = try self.substitute(m.body) },
+                .mod_expr = .{ .name = m.name, .body = try self.substitute(m.body), .is_pub = m.is_pub },
             }),
             .number, .string, .multiline_string, .hash, .nil, .range_literal, .tuple_pattern, .macro_expr => node,
         };

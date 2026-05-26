@@ -197,7 +197,7 @@ pub const Expr = union(enum) {
         // inclusive: bool = true,
     },
     import_expr: *Node,
-    mod_expr: struct { name: []const u8, body: *Node },
+    mod_expr: struct { name: []const u8, body: *Node, is_pub: bool = false },
     macro_expr: struct { pattern: []const u8, template: []const u8 },
     test_block: struct { name: []const u8, body: *Node, skip: bool = false },
     test_suite: struct { name: []const u8, body: *Node },
@@ -439,6 +439,7 @@ pub const Node = struct {
             },
             .mod_expr => |m| {
                 try writer.writeAll("(mod ");
+                if (m.is_pub) try writer.writeAll("pub ");
                 try writer.writeAll(m.name);
                 try sep(writer, depth, 1);
                 try m.body.printAt(writer, child(depth));

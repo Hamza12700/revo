@@ -1293,21 +1293,43 @@ test "import exposes only pub bindings" {
 
 test "mod defines nested namespace" {
     try t.top_number(
-        \\ const ns = mod utils do
+        \\ mod utils do
         \\   pub const answer = 41
         \\   const hidden = 7
         \\ end
-        \\ ns.answer + if module_keys(ns):contains?(:answer) 1 else 0 + if module_keys(ns):contains?(:hidden) 100 else 0
+        \\ utils.answer + if module_keys(utils):contains?(:answer) 1 else 0 + if module_keys(utils):contains?(:hidden) 100 else 0
     , 42);
 }
 
 test "module introspection exposes nested path" {
     try t.top_true(
-        \\ const ns = mod utils do
+        \\ mod utils do
         \\   pub const answer = 41
         \\ end
-        \\ module_path(ns):contains?("::utils")
+        \\ module_path(utils):contains?("::utils")
     );
+}
+
+test "pub mod exports nested namespace" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "outer.rv",
+        .data =
+        \\ pub mod utils do
+        \\   pub const answer = 41
+        \\ end
+        ,
+    });
+
+    const module_dir = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(module_dir);
+
+    try t.top_number_in_dir(module_dir,
+        \\ const outer = import "outer"
+        \\ outer.utils.answer
+    , 41);
 }
 
 test "pub bindings must be top-level in modules" {

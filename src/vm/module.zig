@@ -173,7 +173,9 @@ pub fn runCompiledSessionReport(
     }
 
     const result = try vm.runReport();
-    if (result == .ok) previous_state.result = vm.currentResult();
+    if (result == .ok) {
+        previous_state.result = vm.currentResult();
+    }
     return result;
 }
 

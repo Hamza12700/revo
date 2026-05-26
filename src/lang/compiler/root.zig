@@ -398,7 +398,31 @@ pub const Compiler = struct {
                 try emit.emit(self, .call, 1);
             },
             .mod_expr => |m| {
+                if (m.is_pub and !self.module_mode) {
+                    return self.fail(.ParseError, expr, "`pub` only allowed in modules");
+                }
+                if (m.is_pub and !self.isModuleTopLevelBinding()) {
+                    return self.fail(.ParseError, expr, "`pub` only allowed on top-level module bindings");
+                }
+                var slot: ?revo.LocalSlot = null;
+                if (!ast.isDiscardName(m.name)) {
+                    const local_slot = try state_mod.declareLocal(self, m.name, false);
+                    state_mod.markLocalInitialized(self, local_slot);
+                    state_mod.reserveLocalSlots(self);
+                    slot = local_slot;
+                }
                 try self.compileMod(m.name, m.body);
+                const value_reg = self.active_registers - 1;
+                if (slot) |s| {
+                    try emit.regDupe(self);
+                    if (m.is_pub) {
+                        try self.emitPubExportFrom(m.name, value_reg);
+                    }
+                    try emit.emit(self, .bind_local, s);
+                } else if (m.is_pub) {
+                    try self.emitPubExportFrom(m.name, value_reg);
+                }
+                if (m.is_pub) try emit.nil(self);
             },
             .comp_block => |cb| try self.compileComp(cb.expr),
             .loop_expr => |v| try flow.compileLoop(self, v.body),
@@ -1044,7 +1068,11 @@ pub const Compiler = struct {
             };
             return error.LoweringFailed;
         }
-        try emit.@"const"(self, self.comp_vm.mainResult());
+
+        // Get the module result directly from the main fiber's result field
+        // (not from the stack, which may have leftover values)
+        const mod_result = self.comp_vm.mainFiber().result;
+        try emit.@"const"(self, mod_result);
     }
 
     pub fn compileBlock(self: *Compiler, exprs: []const *Node) InternalLowerError!void {
@@ -1155,7 +1183,11 @@ pub const Compiler = struct {
     // __module_pub_exports.<name> = <top_of_stack_value>
     fn emitPubExport(self: *Compiler, name: []const u8) InternalLowerError!void {
         std.debug.assert(self.active_registers > 0);
-        const value_reg: usize = self.active_registers - 1;
+        try self.emitPubExportFrom(name, self.active_registers - 1);
+    }
+
+    fn emitPubExportFrom(self: *Compiler, name: []const u8, value_reg: usize) InternalLowerError!void {
+        std.debug.assert(self.active_registers > 0);
         try emit.emit(self, .load_global, try self.vm.internAtom("__module_pub_exports"));
 
         const table_reg: usize = self.active_registers - 1;

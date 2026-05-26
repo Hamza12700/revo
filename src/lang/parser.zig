@@ -341,7 +341,7 @@ const Parser = struct {
             .kw_return => self.parseExitExpr(.return_expr, token),
             .kw_comp => self.parseComp(token),
             .kw_import => self.parseImport(token),
-            .kw_mod => self.parseMod(token),
+            .kw_mod => self.parseMod(token, false),
             .kw_spawn => self.parseSpawn(token),
             .kw_join => self.parseJoin(token),
             .kw_yield => self.parseYield(token),
@@ -617,6 +617,10 @@ const Parser = struct {
                 _ = self.advance();
                 break :blk try self.parseBinding(.global, binding_start);
             },
+            .kw_mod => blk: {
+                _ = self.advance();
+                break :blk try self.parseMod(binding_start, true);
+            },
             else => return error.UnexpectedToken,
         };
 
@@ -645,6 +649,14 @@ const Parser = struct {
                     .target = binding.target,
                     .type_name = binding.type_name,
                     .value = binding.value,
+                    .is_pub = true,
+                } },
+            ),
+            .mod_expr => |m| try self.allocExpr(
+                Span.merge(start.span(), pub_binding.span),
+                .{ .mod_expr = .{
+                    .name = m.name,
+                    .body = m.body,
                     .is_pub = true,
                 } },
             ),
@@ -707,12 +719,15 @@ const Parser = struct {
     }
 
     /// mod name body_expr
-    fn parseMod(self: *Parser, start: Token) anyerror!*Node {
+    fn parseMod(self: *Parser, start: Token, is_pub: bool) anyerror!*Node {
         const name = try self.expectIdent();
-        const body = try self.parseExpression(0);
+        const body = if (self.match(.kw_do))
+            try self.parseBlock(self.tokens[self.pos - 1])
+        else
+            try self.parseStatementExpression(0);
         return self.allocExpr(
             Span.merge(start.span(), body.span),
-            .{ .mod_expr = .{ .name = name.text, .body = body } },
+            .{ .mod_expr = .{ .name = name.text, .body = body, .is_pub = is_pub } },
         );
     }
 
