@@ -77,6 +77,7 @@ pub const TokenType = enum {
     slash_assign,
     percent_assign,
     arrow,
+    fat_arrow,
     dot,
     dotdot,
     colon,
@@ -299,6 +300,8 @@ const Lexer = struct {
                 self.makeToken(.colon, start, self.pos, line, column),
             '=' => if (self.matchChar('='))
                 self.makeToken(.eq, start, self.pos, line, column)
+            else if (self.matchChar('>'))
+                self.makeToken(.fat_arrow, start, self.pos, line, column)
             else
                 self.makeToken(.assign, start, self.pos, line, column),
             '!' => if (self.matchChar('='))

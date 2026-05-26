@@ -1706,9 +1706,9 @@ test "match falls through to wildcard" {
     try t.top_number(
         \\ const x = 999
         \\ match x
-        \\ | 1 do 1 end
-        \\ | 2 do 2 end
-        \\ | v do v end
+        \\ | 1 => do 1 end
+        \\ | 2 => do 2 end
+        \\ | v => do v end
     , 999);
 }
 
@@ -1716,9 +1716,9 @@ test "match guard prevents match" {
     try t.top_number(
         \\ const x = 15
         \\ match x
-        \\ | v when v < 10 do 1 end
-        \\ | v when v > 10 do 2 end
-        \\ | v do 3 end
+        \\ | v when v < 10 => do 1 end
+        \\ | v when v > 10 => do 2 end
+        \\ | v => do 3 end
     , 2);
 }
 
@@ -1731,7 +1731,7 @@ test "match guard really prevents match" {
         \\   else i
         \\ 
         \\   match status
-        \\   | v when v == :done n += 1
+        \\   | v when v == :done => n += 1
         \\ end
         \\ 
         \\ n
@@ -1742,9 +1742,9 @@ test "match patterns" {
     try t.top_number(
         \\ const x = (:ok, 42)
         \\ match x
-        \\ | (:asdf, v) 1
-        \\ | (:ok, v) v
-        \\ | (:err, e) 2
+        \\ | (:asdf, v) => 1
+        \\ | (:ok, v) => v
+        \\ | (:err, e) => 2
     , 42);
 }
 
@@ -1752,11 +1752,11 @@ test "match patterns with guards" {
     try t.top_number(
         \\ const x = (:ok, 42)
         \\ match x
-        \\ | (:asdf, v) 1
-        \\ | (:ok, v) when v < 20 2
-        \\ | (:ok, v) when v > 40 v
-        \\ | (:ok, v) when number?(v) 3
-        \\ | (:err, e) 2
+        \\ | (:asdf, v) => 1
+        \\ | (:ok, v) when v < 20 => 2
+        \\ | (:ok, v) when v > 40 => v
+        \\ | (:ok, v) when number?(v) => 3
+        \\ | (:err, e) => 2
     , 42);
 }
 
@@ -1832,8 +1832,8 @@ test "recursive function with guards" {
     try t.top_number(
         \\ const sum = fn(n)
         \\     match n
-        \\     | 0 do 0 end
-        \\     | x do x + sum(x - 1) end
+        \\     | 0 => do 0 end
+        \\     | x => do x + sum(x - 1) end
         \\
         \\ sum(5)
     , 15);
@@ -1846,9 +1846,9 @@ test "comparison with guard in match" {
     try t.top_number(
         \\ const check = fn(x)
         \\     match x
-        \\     | v when v > 50 do 1 end
-        \\     | v when v > 25 do 2 end
-        \\     | v do 3 end
+        \\     | v when v > 50 => do 1 end
+        \\     | v when v > 25 => do 2 end
+        \\     | v => do 3 end
         \\ check(40)
     , 2);
 }
@@ -2136,8 +2136,8 @@ test "match nested tuple pat" {
     try t.top_number(
         \\ const data = (:ok, (:inner, 42))
         \\ match data
-        \\ | (:ok, (:inner, v)) v
-        \\ | _ 0
+        \\ | (:ok, (:inner, v)) => v
+        \\ | _ => 0
     , 42);
 }
 
@@ -2145,9 +2145,9 @@ test "match nested tuple w guard" {
     try t.top_number(
         \\ const data = (:ok, (:inner, 10))
         \\ match data
-        \\ | (:ok, (:inner, v)) when v < 5 1
-        \\ | (:ok, (:inner, v)) when v > 5 2
-        \\ | _ 0
+        \\ | (:ok, (:inner, v)) when v < 5 => 1
+        \\ | (:ok, (:inner, v)) when v > 5 => 2
+        \\ | _ => 0
     , 2);
 }
 
@@ -2157,8 +2157,8 @@ test "match tuple head pattern" {
     try t.top_type(
         \\ const data = (1, 2, 3, 4)
         \\ match data
-        \\ | (first :: rest) rest
-        \\ | _ (0,)
+        \\ | (first :: rest) => rest
+        \\ | _ => (0,)
     , .tuple);
 }
 
@@ -2295,8 +2295,8 @@ test "try ? in pattern matching" {
     try t.top_number(
         \\ const f = fn() (:ok, 7)
         \\ match f()?
-        \\ | 7 100
-        \\ | _ 0
+        \\ | 7 => 100
+        \\ | _ => 0
     , 100);
 }
 
@@ -2371,7 +2371,7 @@ test "pipe: implicit match subject" {
     try t.top_number(
         \\ 2
         \\ |> match
-        \\    | x 42
+        \\    | x => 42
     , 42);
 }
 

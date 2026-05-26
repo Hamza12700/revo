@@ -980,7 +980,7 @@ pub const testing = struct {
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
             \\ const dup = macro `` `saved`
-            \\ const try = macro `%e:expr` `match %e | x when is_error(x) sys.panic(x) | x x`
+            \\ const try = macro `%e:expr` `match %e | x when is_error(x) => sys.panic(x) | x => x`
             \\ 41
             \\ dup
             \\ try(1)

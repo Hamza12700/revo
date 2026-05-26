@@ -3,19 +3,19 @@ ideal shape, when stable, is this
 
 ##
 let f = match fs.open("readme.md")
-| (:ok, file) file
-| (:err, e) panic(e)
+| (:ok, file) => file
+| (:err, e) => panic(e)
 
 print(f:read())
 
 ##
 const x = match (:number, 123)
-| (:number, v) print("is number", v)
+| (:number, v) => print("is number", v)
 
 # this is the one issue im trying to fix about match expressions
 fn frec(n) match n
-	| x when x < 2 x
-	| x frec(x - 1) + frec(x - 2)
+	| x when x < 2 => x
+	| x => frec(x - 1) + frec(x - 2)
 
 print(frec(20))
 ##

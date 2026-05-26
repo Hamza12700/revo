@@ -1,6 +1,10 @@
+
+# still gets executed
 print("hi")
+
+# public
 pub const f = fn() 1
+pub const val = 10
 
 fn g() 2 # asdf 
-pub const val = 10
 const val_priv = 12

@@ -494,7 +494,7 @@ const Parser = struct {
         } });
     }
 
-    /// pat [when <expr>] <expr>
+    /// pat [when <expr>] => <expr>
     fn parseMatchArm(self: *Parser) anyerror!ast.MatchArm {
         var matchers = try std.ArrayList(ast.MatchMatcher).initCapacity(self.alloc, 2);
         errdefer matchers.deinit(self.alloc);
@@ -511,9 +511,12 @@ const Parser = struct {
             if (!self.match(.comma)) break;
         }
 
+        const guard = if (self.match(.kw_when)) try self.parseScoped(null, false, 25) else null;
+        _ = try self.expect(.fat_arrow);
+
         return .{
             .matchers = try matchers.toOwnedSlice(self.alloc),
-            .guard = if (self.match(.kw_when)) try self.parseScoped(null, false, 25) else null,
+            .guard = guard,
             .then = try self.parseExpression(0),
         };
     }
