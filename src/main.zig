@@ -73,6 +73,23 @@ pub fn main(init: std.process.Init) void {
     };
 }
 
+fn handleSource(init: std.process.Init, gpa: Allocator, arena: Allocator, name: []const u8, source: []const u8, config: Config) !void {
+    switch (config.mode) {
+        .run => try runSource(init, gpa, name, source, config),
+        .bench => try benchSource(init, gpa, name, source, config),
+        .compile => try compileToBytecode(init, gpa, arena, name, source, config),
+        .docs => try printDocs(init, gpa, name, source),
+        .disassemble => {
+            var vm = try initVM(init, gpa, config.argv);
+            defer vm.deinit();
+            const artifact = try compileSource(init, &vm, gpa, name, source, config.test_mode);
+            defer gpa.free(artifact.instructions);
+            defer gpa.free(artifact.spans);
+            revo.vm.debug.printDisassembly(artifact, source);
+        },
+    }
+}
+
 fn runMain(init: std.process.Init) !void {
     var arena_instance = std.heap.ArenaAllocator.init(init.gpa);
     defer arena_instance.deinit();
@@ -111,51 +128,21 @@ fn runMain(init: std.process.Init) !void {
                 printError(init, "reading stdin - {}", .{err});
                 return error.FileError;
             };
-
             if (std.mem.endsWith(u8, path, ".rvo")) {
-                // should never happen for `-`, but keep parity
                 try runBytecode(init, init.gpa, "<stdin>", source, config);
             } else {
-                switch (config.mode) {
-                    .run => try runSource(init, init.gpa, "<stdin>", source, config),
-                    .bench => try benchSource(init, init.gpa, "<stdin>", source, config),
-                    .compile => try compileToBytecode(init, init.gpa, init.arena.allocator(), "<stdin>", source, config),
-                    .docs => try printDocs(init, init.gpa, "<stdin>", source),
-                    .disassemble => {
-                        var vm = try initVM(init, init.gpa, config.argv);
-                        defer vm.deinit();
-                        const artifact = try compileSource(init, &vm, init.gpa, "<stdin>", source, config.test_mode);
-                        defer init.gpa.free(artifact.instructions);
-                        defer init.gpa.free(artifact.spans);
-                        revo.vm.debug.printDisassembly(artifact, source);
-                    },
-                }
+                try handleSource(init, init.gpa, init.arena.allocator(), "<stdin>", source, config);
             }
             if (!config.interactive) return;
         }
     } else {
-        const stdout = std.Io.File.stdin();
-        // no script path provided; if stdin is pipe, read it and run
-        if (try stdout.isTty(init.io)) {
+        const stdin_file = std.Io.File.stdin();
+        if (!try stdin_file.isTty(init.io)) {
             const source = std.Io.Dir.cwd().readFileAlloc(init.io, "/dev/stdin", arena, std.Io.Limit.unlimited) catch |err| {
                 printError(init, "reading stdin - {}", .{err});
                 return error.FileError;
             };
-            // run as src
-            switch (config.mode) {
-                .run => try runSource(init, init.gpa, "<stdin>", source, config),
-                .bench => try benchSource(init, init.gpa, "<stdin>", source, config),
-                .compile => try compileToBytecode(init, init.gpa, init.arena.allocator(), "<stdin>", source, config),
-                .docs => try printDocs(init, init.gpa, "<stdin>", source),
-                .disassemble => {
-                    var vm = try initVM(init, init.gpa, config.argv);
-                    defer vm.deinit();
-                    const artifact = try compileSource(init, &vm, init.gpa, "<stdin>", source, config.test_mode);
-                    defer init.gpa.free(artifact.instructions);
-                    defer init.gpa.free(artifact.spans);
-                    revo.vm.debug.printDisassembly(artifact, source);
-                },
-            }
+            try handleSource(init, init.gpa, init.arena.allocator(), "<stdin>", source, config);
             if (!config.interactive) return;
         }
     }
@@ -198,21 +185,7 @@ fn runMain(init: std.process.Init) !void {
                 },
             }
         } else {
-            switch (config.mode) {
-                .run => try runSource(init, init.gpa, path, source, config),
-                .bench => try benchSource(init, init.gpa, path, source, config),
-                .compile => try compileToBytecode(init, init.gpa, arena, path, source, config),
-                .docs => try printDocs(init, init.gpa, path, source),
-                .disassemble => {
-                    var vm = try initVM(init, init.gpa, config.argv);
-                    defer vm.deinit();
-
-                    const artifact = try compileSource(init, &vm, init.gpa, path, source, config.test_mode);
-                    defer init.gpa.free(artifact.instructions);
-                    defer init.gpa.free(artifact.spans);
-                    revo.vm.debug.printDisassembly(artifact, source);
-                },
-            }
+            try handleSource(init, init.gpa, arena, path, source, config);
         }
         if (!config.interactive) return;
     }
