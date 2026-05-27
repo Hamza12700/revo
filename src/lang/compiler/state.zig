@@ -5,6 +5,7 @@ const Compiler = revo.lang.compiler.Compiler;
 const LocalSlot = revo.LocalSlot;
 const Register = revo.opcode.Register;
 const UpvalueSpec = revo.functions.UpvalueSpec;
+const types = @import("types.zig");
 
 const ast = @import("../ast.zig");
 const Node = ast.Node;
@@ -23,11 +24,18 @@ pub const LocalVar = struct {
 };
 
 pub const FunctionState = struct {
+    pub const TypeHint = struct {
+        name: []const u8,
+        type_info: types.TypeInfo,
+    };
+
     alloc: std.mem.Allocator,
     locals: std.ArrayList(LocalVar),
     all_locals: std.ArrayList(LocalVar),
     upvalues: std.ArrayList(UpvalueSpec),
     scope_starts: std.ArrayList(usize),
+    type_hints: std.ArrayList(TypeHint),
+    type_scope_starts: std.ArrayList(usize),
     return_type: ?[]const u8 = null,
     var_types: std.StringHashMap(?[]const u8),
     fn_signatures: std.StringHashMap(*FnSig),
@@ -45,6 +53,8 @@ pub const FunctionState = struct {
             .all_locals = try std.ArrayList(LocalVar).initCapacity(alloc, 8),
             .upvalues = try std.ArrayList(UpvalueSpec).initCapacity(alloc, 4),
             .scope_starts = try std.ArrayList(usize).initCapacity(alloc, 8),
+            .type_hints = try std.ArrayList(TypeHint).initCapacity(alloc, 8),
+            .type_scope_starts = try std.ArrayList(usize).initCapacity(alloc, 8),
             .var_types = std.StringHashMap(?[]const u8).init(alloc),
             .fn_signatures = std.StringHashMap(*FnSig).init(alloc),
         };
@@ -55,6 +65,8 @@ pub const FunctionState = struct {
         self.all_locals.deinit(alloc);
         self.upvalues.deinit(alloc);
         self.scope_starts.deinit(alloc);
+        self.type_hints.deinit(alloc);
+        self.type_scope_starts.deinit(alloc);
         self.var_types.deinit();
         var it = self.fn_signatures.iterator();
         while (it.next()) |entry| {
@@ -114,7 +126,7 @@ pub fn popRegister(self: *Compiler) void {
     }
 }
 
-pub fn currentFunctionState(self: *Compiler) ?*FunctionState {
+pub fn currentFunctionState(self: *const Compiler) ?*FunctionState {
     if (self.functions.items.len == 0) return null;
     return &self.functions.items[self.functions.items.len - 1];
 }
@@ -152,12 +164,15 @@ fn currentScopeStart(self: *const Compiler, fn_idx: usize) usize {
 pub fn pushScope(self: *Compiler) !void {
     const state = currentFunctionState(self) orelse return;
     try state.scope_starts.append(self.alloc, state.locals.items.len);
+    try state.type_scope_starts.append(self.alloc, state.type_hints.items.len);
 }
 
 pub fn popScope(self: *Compiler) void {
     const state = currentFunctionState(self) orelse return;
     const start = state.scope_starts.pop() orelse return;
     state.locals.items.len = start;
+    const type_start = state.type_scope_starts.pop() orelse return;
+    state.type_hints.items.len = type_start;
 }
 
 pub fn findLocalInCurrentScope(self: *Compiler, name: []const u8) ?*LocalVar {
@@ -257,6 +272,25 @@ pub fn setLocalTableFields(self: *Compiler, slot: LocalSlot, fields: ?[]const []
             break;
         }
     }
+}
+
+pub fn setLocalTypeHint(self: *Compiler, name: []const u8, type_info: types.TypeInfo) !void {
+    const state = currentFunctionState(self) orelse return;
+    try state.type_hints.append(self.alloc, .{
+        .name = name,
+        .type_info = type_info,
+    });
+}
+
+pub fn resolveLocalTypeHint(self: *const Compiler, name: []const u8) ?types.TypeInfo {
+    const state = currentFunctionState(self) orelse return null;
+    var i = state.type_hints.items.len;
+    while (i > 0) {
+        i -= 1;
+        const hint = state.type_hints.items[i];
+        if (std.mem.eql(u8, hint.name, name)) return hint.type_info;
+    }
+    return null;
 }
 
 pub fn localHasTableField(self: *const Compiler, name: []const u8, field_name: []const u8) bool {

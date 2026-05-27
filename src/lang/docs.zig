@@ -187,5 +187,3 @@ test "extractDocs handles multiline string @doc" {
     try std.testing.expectEqualStrings("add", res.items[0].name);
     try std.testing.expectEqualStrings("adds numbers\nreturns sum", res.items[0].doc);
 }
-
-

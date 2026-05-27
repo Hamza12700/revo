@@ -1878,6 +1878,19 @@ test "function with multiple parameters" {
     , 60);
 }
 
+test "typed function alias call is checked" {
+    try t.expectCompileFailure(
+        \\ const id = fn(x: int) x
+        \\ const f = id
+        \\ f("nope")
+    ,
+        .ParseError,
+        3,
+        4,
+        "argument 1 to call expects int, got string\ngot: call(string)\nwant: call(int)",
+    );
+}
+
 test "recursive function with guards" {
     try t.top_number(
         \\ const sum = fn(n)

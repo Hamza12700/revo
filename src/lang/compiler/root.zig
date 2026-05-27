@@ -534,6 +534,7 @@ pub const Compiler = struct {
     ) InternalLowerError!void {
         switch (call.callee.expr) {
             .field => |field| {
+                try self.validateTypedCall(expr, call.callee, call.args);
                 // method call desugar: obj:method(args)
                 const desugared = call.args.len > 0 and
                     call.args[0] == field.object;
@@ -564,6 +565,7 @@ pub const Compiler = struct {
                 }
             },
             .index => |index| {
+                try self.validateTypedCall(expr, call.callee, call.args);
                 try self.compile(index.object, true);
                 try self.compile(index.key, true);
                 for (call.args) |arg| try self.compile(arg, true);
@@ -586,6 +588,10 @@ pub const Compiler = struct {
                 else
                     call.args;
 
+                if (reordered_args.ptr == call.args.ptr) {
+                    try self.validateTypedCall(expr, call.callee, args_to_compile);
+                }
+
                 for (args_to_compile) |arg| {
                     if (arg.expr == .assign_expr) {
                         // in call context, assignment expressions should only compile their values
@@ -606,6 +612,7 @@ pub const Compiler = struct {
                 );
             },
             .fn_expr => {
+                try self.validateTypedCall(expr, call.callee, call.args);
                 try self.compile(call.callee, true);
                 for (call.args) |arg| try self.compile(arg, true);
                 try emit.emit(
@@ -627,6 +634,91 @@ pub const Compiler = struct {
                     ),
                 );
             },
+        }
+    }
+
+    fn validateTypedCall(
+        self: *Compiler,
+        call_expr: *const Node,
+        callee: *const Node,
+        args: []const *Node,
+    ) InternalLowerError!void {
+        const callee_type = type_check.inferExprType(self, callee);
+        if (callee_type != .function) return;
+
+        const sig = callee_type.function;
+        if (args.len != sig.params.len) {
+            const expected_types = try self.buildTypesListFromInfo(sig.params);
+            defer self.alloc.free(expected_types);
+            const actual_types = try self.buildArgTypesList(args);
+            defer self.alloc.free(actual_types);
+
+            const actual_sig = try formatCallSignatureTypesOnly(
+                self.alloc,
+                "call",
+                actual_types,
+            );
+            defer self.alloc.free(actual_sig);
+            const expected_sig = try formatCallSignatureTypesOnly(
+                self.alloc,
+                "call",
+                expected_types,
+            );
+            defer self.alloc.free(expected_sig);
+
+            const msg = try std.fmt.allocPrint(
+                self.alloc,
+                "call expects {d} argument(s), got {d}\ngot: {s}\nwant: {s}",
+                .{
+                    sig.params.len,
+                    args.len,
+                    actual_sig,
+                    expected_sig,
+                },
+            );
+            return self.fail(.ParseError, call_expr, msg);
+        }
+
+        for (args, sig.params, 0..) |arg, expected_type, idx| {
+            type_check.checkType(
+                self.alloc,
+                expected_type,
+                type_check.inferExprType(self, arg),
+                arg.span,
+            ) catch |err| switch (err) {
+                error.TypeError => {
+                    const actual_types = try self.buildArgTypesList(args);
+                    defer self.alloc.free(actual_types);
+                    const expected_types = try self.buildTypesListFromInfo(sig.params);
+                    defer self.alloc.free(expected_types);
+
+                    const actual_sig = try formatCallSignatureTypesOnly(
+                        self.alloc,
+                        "call",
+                        actual_types,
+                    );
+                    defer self.alloc.free(actual_sig);
+                    const expected_sig = try formatCallSignatureTypesOnly(
+                        self.alloc,
+                        "call",
+                        expected_types,
+                    );
+                    defer self.alloc.free(expected_sig);
+
+                    const msg = try std.fmt.allocPrint(
+                        self.alloc,
+                        "argument {d} to call expects {s}, got {s}\ngot: {s}\nwant: {s}",
+                        .{
+                            idx + 1,
+                            types.typeName(expected_type),
+                            types.typeName(type_check.inferExprType(self, arg)),
+                            actual_sig,
+                            expected_sig,
+                        },
+                    );
+                    return self.fail(.ParseError, arg, msg);
+                },
+            };
         }
     }
 
@@ -906,6 +998,20 @@ pub const Compiler = struct {
         return try list.toOwnedSlice(self.alloc);
     }
 
+    fn buildTypesListFromInfo(
+        self: *Compiler,
+        type_infos: []const types.TypeInfo,
+    ) ![]const []const u8 {
+        var list = try std.ArrayList([]const u8).initCapacity(
+            self.alloc,
+            type_infos.len,
+        );
+        for (type_infos) |type_info| {
+            try list.append(self.alloc, types.typeName(type_info));
+        }
+        return try list.toOwnedSlice(self.alloc);
+    }
+
     fn buildArgTypesList(
         self: *Compiler,
         args: []const *const Node,
@@ -947,12 +1053,15 @@ pub const Compiler = struct {
         field_name: []const u8,
     ) ?usize {
         if (object.expr != .ident) return null;
-        const fn_state = state_mod.currentFunctionState(self) orelse return null;
-        const type_name = fn_state.var_types.get(object.expr.ident) orelse return null;
-        const type_id = self.vm.struct_types.findTypeByName(type_name.?) orelse return null;
-        const desc = self.vm.struct_types.getType(type_id) orelse return null;
-        const field_atom = self.vm.internAtom(field_name) catch return null;
-        return desc.fieldIndex(field_atom);
+        return switch (type_check.inferExprType(self, object)) {
+            .struct_type => |type_name| blk: {
+                const type_id = self.vm.struct_types.findTypeByName(type_name) orelse break :blk null;
+                const desc = self.vm.struct_types.getType(type_id) orelse break :blk null;
+                const field_atom = self.vm.internAtom(field_name) catch break :blk null;
+                break :blk desc.fieldIndex(field_atom);
+            },
+            else => null,
+        };
     }
 
     fn aliasRuntimeValue(self: *Compiler, ti: types.TypeInfo) ?Data {
@@ -1144,6 +1253,13 @@ pub const Compiler = struct {
                 );
             } else try self.compile(binding.value, true);
 
+            const inferred_type = type_check.inferExprType(self, binding.value);
+            try state_mod.setLocalTypeHint(self, name, inferred_type);
+            if (type_check.storedTypeName(inferred_type)) |stored_name| {
+                if (state_mod.currentFunctionState(self)) |fn_state|
+                    try fn_state.var_types.put(name, stored_name);
+            }
+
             if (ast.isDiscardName(name)) return;
             try emit.regDupe(self);
             try emit.emit(
@@ -1240,6 +1356,15 @@ pub const Compiler = struct {
                 return err;
             };
             if (param.type_name) |type_name| try s.var_types.put(param.name, type_name);
+            if (param.type_name) |type_name| {
+                s.type_hints.append(self.alloc, .{
+                    .name = param.name,
+                    .type_info = type_check.resolveTypeName(self, type_name),
+                }) catch |err| {
+                    s.deinit(self.alloc);
+                    return err;
+                };
+            }
         }
         const params_len: LocalSlot = @intCast(params.len);
         self.functions.append(self.alloc, s) catch |err| {

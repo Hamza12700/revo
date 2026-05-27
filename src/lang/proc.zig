@@ -756,7 +756,6 @@ fn atomNode(allocator: std.mem.Allocator, span: Span, name: []const u8) ExpandEr
     return ast.allocNode(allocator, span, .{ .hash = name });
 }
 
-
 fn iter(args: []const Data, vm: *revo.VM) !revo.std_lib.NativeResult {
     if (args.len != 1) return .errArity(args.len, 1);
     const items = switch (args[0].tag()) {

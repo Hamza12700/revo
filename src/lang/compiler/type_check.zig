@@ -77,6 +77,7 @@ pub fn inferExprType(self: *Compiler, expr: *const Node) TypeInfo {
 }
 
 fn inferVarType(self: *Compiler, name: []const u8) TypeInfo {
+    if (state_mod.resolveLocalTypeHint(self, name)) |hint| return hint;
     const local = state_mod.resolveLocalVar(self, name) orelse return inferTypeMap(self, name);
     if (local.type_name) |tn| return resolveTypeName(self, tn);
     return inferTypeMap(self, name);
@@ -139,17 +140,19 @@ fn inferFieldType(self: *Compiler, field: anytype) TypeInfo {
 
 fn inferIndexType(self: *Compiler, index: anytype) TypeInfo {
     return switch (inferExprType(self, index.object)) {
-        .tuple => switch (index.object.expr) {
-            .tuple => |items| if (index.key.expr == .number) blk: {
-                const key_num = index.key.expr.number.value;
-                if (std.math.isFinite(key_num) and @floor(key_num) == key_num and key_num >= 0) {
-                    const idx: usize = @intFromFloat(key_num);
-                    if (idx < items.len) break :blk inferExprType(self, items[idx]);
+        .tuple => |items| if (index.key.expr == .number) blk: {
+            const key_num = index.key.expr.number.value;
+            if (std.math.isFinite(key_num) and @floor(key_num) == key_num and key_num >= 0) {
+                const idx: usize = @intFromFloat(key_num);
+                if (index.object.expr == .tuple) {
+                    const tuple_items = index.object.expr.tuple;
+                    if (idx < tuple_items.len) break :blk inferExprType(self, tuple_items[idx]);
+                } else if (idx < items.len) {
+                    break :blk items[idx];
                 }
-                break :blk .any;
-            } else .any,
-            else => .any,
-        },
+            }
+            break :blk .any;
+        } else .any,
         else => .any,
     };
 }

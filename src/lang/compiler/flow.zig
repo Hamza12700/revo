@@ -15,6 +15,14 @@ const emit = @import("emit.zig");
 const toRegister = emit.toRegister;
 const state = @import("state.zig");
 const type_check = @import("type_check.zig");
+const types_mod = @import("types.zig");
+
+const validate_if_branches: bool = true;
+
+const TypeHint = struct {
+    name: []const u8,
+    type_info: types_mod.TypeInfo,
+};
 
 pub const VarStorage = union(enum) {
     local: Operand,
@@ -425,7 +433,14 @@ pub fn compileMatch(
         try fail_list.appendSlice(self.alloc, fail_jumps);
         self.alloc.free(fail_jumps);
 
-        if (matcher_expr) |me| try bindMatchPattern(self, me, subject_storage);
+        if (matcher_expr) |me| {
+            if (subject.expr == .ident) {
+                if (patternTypeInfo(self, me)) |ti| {
+                    try state.setLocalTypeHint(self, subject.expr.ident, ti);
+                }
+            }
+            try bindMatchPattern(self, me, subject_storage);
+        }
 
         if (arm.guard) |guard| {
             try self.compile(guard, true);
@@ -629,6 +644,9 @@ pub fn compileIf(
 
     try state.pushScope(self);
     errdefer state.popScope(self);
+    if (conditionTypeHint(condition)) |hint| {
+        try state.setLocalTypeHint(self, hint.name, hint.type_info);
+    }
     try self.compile(then_expr, true);
     state.popScope(self);
     const then_registers = self.active_registers;
@@ -642,10 +660,8 @@ pub fn compileIf(
     errdefer state.popScope(self);
     if (else_expr) |branch| {
         try self.compile(branch, true);
-        if (comptime false) {
-            const else_type = type_check.inferExprType(self, branch);
-            try validateIfBranchTypes(self, then_type, else_type, then_expr, branch);
-        }
+        const else_type = type_check.inferExprType(self, branch);
+        try validateIfBranchTypes(self, then_type, else_type, then_expr, branch);
     } else try emit.nil(self);
     state.popScope(self);
     std.debug.assert(then_registers == self.active_registers);
@@ -653,8 +669,75 @@ pub fn compileIf(
     self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
 }
 
-// disabled until type system matures
+fn conditionTypeHint(condition: *const Node) ?TypeHint {
+    return switch (condition.expr) {
+        .call => |call| blk: {
+            if (call.args.len != 1 or call.callee.expr != .ident or !std.mem.endsWith(u8, call.callee.expr.ident, "?")) break :blk null;
+            if (call.args[0].expr != .ident) break :blk null;
+            const type_info = predicateTypeInfo(call.callee.expr.ident) orelse break :blk null;
+            break :blk .{ .name = call.args[0].expr.ident, .type_info = type_info };
+        },
+        .binary => |b| blk: {
+            if (b.op != .eq) break :blk null;
+            const left = typeCompareHint(b.left, b.right) orelse typeCompareHint(b.right, b.left) orelse break :blk null;
+            break :blk left;
+        },
+        else => null,
+    };
+}
+
+fn typeCompareHint(type_expr: *const Node, value_expr: *const Node) ?TypeHint {
+    if (type_expr.expr != .call) return null;
+    const call = type_expr.expr.call;
+    if (call.args.len != 1 or call.callee.expr != .ident) return null;
+    if (!std.mem.eql(u8, call.callee.expr.ident, "type")) return null;
+    if (call.args[0].expr != .ident) return null;
+    if (value_expr.expr != .hash) return null;
+    const type_info = typeNameInfo(value_expr.expr.hash) orelse return null;
+    return .{ .name = call.args[0].expr.ident, .type_info = type_info };
+}
+
+fn predicateTypeInfo(name: []const u8) ?types_mod.TypeInfo {
+    if (std.mem.eql(u8, name, "number?")) return typeNameInfo("number");
+    if (std.mem.eql(u8, name, "string?")) return typeNameInfo("string");
+    if (std.mem.eql(u8, name, "bool?")) return typeNameInfo("bool");
+    if (std.mem.eql(u8, name, "table?")) return typeNameInfo("table");
+    return null;
+}
+
+fn typeNameInfo(name: []const u8) ?types_mod.TypeInfo {
+    if (std.mem.eql(u8, name, "number")) return .{
+        .@"union" = &.{
+            .{ .name = "", .types = &.{.int} },
+            .{ .name = "", .types = &.{.float} },
+        },
+    };
+    if (std.mem.eql(u8, name, "string")) return .string;
+    if (std.mem.eql(u8, name, "bool")) return .bool;
+    if (std.mem.eql(u8, name, "table")) return .{ .struct_type = "table" };
+    return null;
+}
+
+fn patternTypeInfo(self: *Compiler, pattern: *const Node) ?types_mod.TypeInfo {
+    return switch (pattern.expr) {
+        .number => |n| if (n.is_float) .float else .int,
+        .string, .multiline_string => .string,
+        .hash => |name| .{ .atom = name },
+        .tuple_pattern => |items| blk: {
+            var types = std.ArrayList(types_mod.TypeInfo).initCapacity(self.alloc, items.len) catch break :blk null;
+            defer types.deinit(self.alloc);
+            for (items) |item| {
+                types.append(self.alloc, patternTypeInfo(self, item) orelse .any) catch break :blk null;
+            }
+            const tuple_items = types.toOwnedSlice(self.alloc) catch break :blk null;
+            break :blk types_mod.TypeInfo{ .tuple = tuple_items };
+        },
+        else => null,
+    };
+}
+
 fn validateIfBranchTypes(self: *Compiler, then_type: type_check.TypeInfo, else_type: type_check.TypeInfo, then_expr: *const Node, else_expr: *const Node) !void {
+    if (comptime !validate_if_branches) return;
     _ = then_expr;
     if (then_type == .any or else_type == .any) return;
     if (then_type.eql(else_type)) return;
@@ -662,8 +745,6 @@ fn validateIfBranchTypes(self: *Compiler, then_type: type_check.TypeInfo, else_t
     if (types_mod.canCoerce(then_type, else_type)) return;
     return self.fail(.ParseError, else_expr, "if/else branches must have matching types");
 }
-
-const types_mod = @import("types.zig");
 
 pub fn compileAnd(self: *Compiler, left: *const Node, right: *const Node) !void {
     // short-circuit: false left skips right, returns left
