@@ -14,6 +14,11 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(ReplBackend, "repl_backend", repl_backend);
     build_options.addOption([]const u8, "version", VERSION);
 
+    // release/run always force isocline
+    const forced_build_options = b.addOptions();
+    forced_build_options.addOption(ReplBackend, "repl_backend", .isocline);
+    forced_build_options.addOption([]const u8, "version", VERSION);
+
     const vm_mod = b.addModule("vm", .{
         .root_source_file = b.path("src/vm/root.zig"),
         .target = target,
@@ -41,6 +46,25 @@ pub fn build(b: *std.Build) void {
 
     const is_freestanding = target.result.os.tag == .freestanding;
 
+    //
+    // git submodule update for all Doptimize!=Debug
+    //
+    const maybe_git_submod: ?*std.Build.Step = if (optimize != .Debug) blk: {
+        const stamp = ".zig-cache/submodules-updated";
+        const cmd = b.addSystemCommand(&.{
+            "sh", "-c",
+            b.fmt(
+                // so that fetch is nop on rebuild
+                "[ {s} -nt .gitmodules ] || (git submodule update --init --recursive && touch {s})",
+                .{ stamp, stamp },
+            ),
+        });
+        break :blk &cmd.step;
+    } else null;
+
+    //
+    // main exe
+    //
     const exe_root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -59,48 +83,50 @@ pub fn build(b: *std.Build) void {
     for (imports) |imp| exe_root.addImport(imp[0], imp[1]);
 
     const exe = b.addExecutable(.{ .name = "revo", .root_module = exe_root });
-    b.installArtifact(exe);
+    if (optimize == .Debug) exe.lto = .none;
 
-    const run_exe_root = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = !is_freestanding,
-    });
+    const install_exe = b.addInstallArtifact(exe, .{});
+    if (maybe_git_submod) |git_step| install_exe.step.dependOn(git_step);
+    b.getInstallStep().dependOn(&install_exe.step);
 
-    const run_build_options = b.addOptions();
-    run_build_options.addOption(ReplBackend, "repl_backend", .isocline);
-    run_build_options.addOption([]const u8, "version", VERSION);
-
-    if (!is_freestanding) {
-        add_isocline(run_exe_root, b);
-        run_exe_root.addOptions("build_options", run_build_options);
-    }
-
-    for (imports) |imp| run_exe_root.addImport(imp[0], imp[1]);
-
-    const run_exe = b.addExecutable(.{ .name = "revo-run", .root_module = run_exe_root });
-
-    const run_cmd = b.addRunArtifact(run_exe);
-
+    //
+    // run step
+    //
+    const run_cmd = b.addRunArtifact(exe);
+    if (maybe_git_submod) |git_step| run_cmd.step.dependOn(git_step);
     if (b.args) |args| run_cmd.addArgs(args);
     b.step("run", "run the cli").dependOn(&run_cmd.step);
 
-    const check_modules = [_]*std.Build.Module{ revo_mod, vm_mod, exe_root };
+    //
+    // check step
+    //
+    const check_step = b.step("check", "type-check without codegen or linking");
+    if (maybe_git_submod) |git_step| check_step.dependOn(git_step);
 
+    //
+    // tests
+    //
     const test_step = b.step("test", "run all tests");
-    for (check_modules) |mod| {
-        test_step.dependOn(&b.addRunArtifact(b.addTest(.{
-            .root_module = mod,
-            .filters = test_filters,
-        })).step);
-    }
 
-    const check_step = b.step("check", "compile the project without running it");
-    check_step.dependOn(&b.addExecutable(.{ .name = "revo-check", .root_module = exe_root }).step);
-    for (check_modules) |mod| {
-        check_step.dependOn(&b.addTest(.{ .root_module = mod, .filters = test_filters }).step);
-    }
+    const test_vm_step = b.step("test-vm", "test only the vm module");
+    const vm_test = b.addTest(.{ .root_module = vm_mod, .filters = test_filters });
+    test_vm_step.dependOn(&b.addRunArtifact(vm_test).step);
+    check_step.dependOn(&b.addTest(.{ .root_module = vm_mod, .filters = test_filters }).step);
+
+    const test_revo_step = b.step("test-revo", "test only the revo module");
+    const revo_test = b.addTest(.{ .root_module = revo_mod, .filters = test_filters });
+    test_revo_step.dependOn(&b.addRunArtifact(revo_test).step);
+    check_step.dependOn(&b.addTest(.{ .root_module = revo_mod, .filters = test_filters }).step);
+
+    const test_exe_step = b.step("test-exe", "test only the exe root");
+    const exe_test = b.addTest(.{ .root_module = exe_root, .filters = test_filters });
+    test_exe_step.dependOn(&b.addRunArtifact(exe_test).step);
+    check_step.dependOn(&b.addTest(.{ .root_module = exe_root, .filters = test_filters }).step);
+
+    test_step.dependOn(test_vm_step);
+    test_step.dependOn(test_revo_step);
+    test_step.dependOn(test_exe_step);
+
     //
     // releases
     //
@@ -113,6 +139,15 @@ pub fn build(b: *std.Build) void {
     };
 
     const release_step = b.step("release", "build release binaries for all targets");
+
+    // release is always non-Debug so always update submodules w\ stamp file
+    const git_submod_release = b.addSystemCommand(&.{
+        "sh", "-c",
+        b.fmt(
+            "[ .zig-cache/submodules-updated -nt .gitmodules ] || (git submodule update --init --recursive && touch .zig-cache/submodules-updated)",
+            .{},
+        ),
+    });
 
     for (release_targets) |target_str| {
         const release_target = b.resolveTargetQuery(
@@ -129,8 +164,8 @@ pub fn build(b: *std.Build) void {
         });
 
         add_isocline(release_mod, b);
-
-        release_mod.addOptions("build_options", build_options);
+        // forced_build_options: release always uses isocline
+        release_mod.addOptions("build_options", forced_build_options);
         for (imports) |imp| release_mod.addImport(imp[0], imp[1]);
 
         const bin_name = b.fmt("revo-{s}-{s}", .{ VERSION, target_str });
@@ -140,9 +175,13 @@ pub fn build(b: *std.Build) void {
         });
 
         const install = b.addInstallArtifact(release_exe, .{});
+        install.step.dependOn(&git_submod_release.step);
         release_step.dependOn(&install.step);
     }
 
+    //
+    // erevo library
+    //
     const erevo_mod = b.addModule("erevo", .{
         .root_source_file = b.path("src/erevo.zig"),
         .target = target,
@@ -156,7 +195,15 @@ pub fn build(b: *std.Build) void {
     });
 
     const lib_step = b.step("lib", "build the erevo library");
-    lib_step.dependOn(&b.addInstallArtifact(lib, .{}).step);
+    const install_lib = b.addInstallArtifact(lib, .{});
+    if (maybe_git_submod) |git_step| install_lib.step.dependOn(git_step);
+    lib_step.dependOn(&install_lib.step);
+
+    // also cover erevo in check step (maybe possibly dont)
+    // check_step.dependOn(&b.addTest(.{ .root_module = erevo_mod, .filters = test_filters }).step);
+    // const test_erevo_step = b.step("test-erevo", "test only the erevo library");
+    // test_erevo_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = erevo_mod, .filters = test_filters })).step);
+    // test_step.dependOn(test_erevo_step);
 
     const write_files = b.addWriteFiles();
     const bindings = @import("src/bindings.zig");

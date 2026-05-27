@@ -1,3 +1,4 @@
 [submodule "deps/isocline"]
 	path = deps/isocline
 	url = https://github.com/daanx/isocline
+	shallow = true
