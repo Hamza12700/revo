@@ -50,7 +50,9 @@ pub fn register_stdlib(vm: *revo.VM) !void {
     for (vm.runtime.argv) |arg| {
         try argv.push(try vm.ownDataString(arg));
     }
-    try vm.setGlobal("argv", Data.new.table(argv_id));
+    const argv_val = Data.new.table(argv_id);
+    try vm.globals.put(try vm.internAtom("argv"), argv_val);
+    try vm.stdlib_globals.put(try vm.internAtom("argv"), argv_val);
     // math
     try @import("math.zig").register(vm);
     try @import("stupid.zig").register(vm);
@@ -64,7 +66,6 @@ pub fn register_stdlib(vm: *revo.VM) !void {
     try @import("iter.zig").register(vm);
     try @import("fs.zig").register(vm);
     try typeUtils(vm);
-    try @import("../lang/proc.zig").register(vm);
 }
 
 pub const NativeFn = *const fn (args: []const Data, vm: *VM) anyerror!NativeResult;
@@ -182,14 +183,18 @@ pub fn registerFunctions(vm: *VM, funcs: []const FuncDef) !void {
     for (funcs) |f| {
         const id = try vm.functions.create(.{ .native = f.f });
         const atom = try vm.internAtom(f.name);
-        try vm.globals.put(atom, Data.new.function(id));
+        const val = Data.new.function(id);
+        try vm.globals.put(atom, val);
+        try vm.stdlib_globals.put(atom, val);
     }
 }
 
 pub fn registerTableFunctions(vm: *VM, table_name: []const u8, funcs: []const FuncDef) !void {
     const t_id = try vm.tables.create();
     const atom = try vm.internAtom(table_name);
-    try vm.globals.put(atom, Data.new.table(t_id));
+    const val = Data.new.table(t_id);
+    try vm.globals.put(atom, val);
+    try vm.stdlib_globals.put(atom, val);
     const t = try vm.tables.get(t_id);
     for (funcs) |f| {
         const fn_id = try vm.functions.create(.{ .native = f.f });
@@ -1051,7 +1056,9 @@ pub fn typeUtils(vm: *VM) !void {
             func,
         ) });
         const atom = try vm.internAtom(field.name ++ "?");
-        try vm.globals.put(atom, Data.new.function(id));
+        const val = Data.new.function(id);
+        try vm.globals.put(atom, val);
+        try vm.stdlib_globals.put(atom, val);
     }
     const is_number = struct {
         fn num(args: []const Data, _: *VM) !NativeResult {
@@ -1063,7 +1070,9 @@ pub fn typeUtils(vm: *VM) !void {
     }.num;
     const id = try vm.functions.create(.{ .native = define(&[_]TypeSpec{.any}, is_number) });
     const atom = try vm.internAtom("number?");
-    try vm.globals.put(atom, Data.new.function(id));
+    const val = Data.new.function(id);
+    try vm.globals.put(atom, val);
+    try vm.stdlib_globals.put(atom, val);
 }
 
 test "type predicates" {

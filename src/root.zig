@@ -41,24 +41,28 @@ pub const Runtime = struct {
         self: *Runtime,
         name: []const u8,
         source: []const u8,
-    ) anyerror!lang.Artifact {
-        const vm_ptr = self.vm orelse return error.NoVM;
-        const build_result = try lang.build(vm_ptr, .{ .name = name, .text = source }, .{});
-        return switch (build_result) {
-            .ok => |art| art,
-            .err => |err| {
-                printBuildError(self.alloc, .{ .name = name, .text = source }, err);
-                return error.CompilationError;
-            },
+    ) lang.BuildResult {
+        const vm_ptr = self.vm orelse return .{ .err = .{ .parse = .{
+            .kind = .LexUnknown,
+            .span = null,
+            .message = "vm not initialized",
+        } } };
+        return lang.build(vm_ptr, .{ .name = name, .text = source }, .{}) catch |err| {
+            return .{ .err = .{ .parse = .{
+                .kind = .LexUnknown,
+                .span = null,
+                .message = @errorName(err),
+            } } };
         };
     }
 
     /// execute a compiled artifact, also see eval()
+    /// returns EvalResult so callers can inspect runtime errors programmatically
     pub fn run(
         self: *Runtime,
         name: []const u8,
         artifact: lang.Artifact,
-    ) anyerror!module.EvalResult {
+    ) !module.EvalResult {
         const vm_ptr = self.vm orelse return error.NoVM;
         try vm_ptr.setProgramDebugInfo(artifact.spans, "", name);
         return try module.runCompiledModuleReport(vm_ptr, name, artifact.instructions);
@@ -69,11 +73,22 @@ pub const Runtime = struct {
         self: *Runtime,
         name: []const u8,
         source: []const u8,
-    ) anyerror!module.EvalResult {
-        const artifact = try self.compile(name, source);
+    ) !module.EvalResult {
+        const vm_ptr = self.vm orelse return error.NoVM;
+        const build_result = lang.build(vm_ptr, .{ .name = name, .text = source }, .{}) catch {
+            return error.CompilationError;
+        };
+        const artifact = switch (build_result) {
+            .ok => |art| art,
+            .err => |err| {
+                printBuildError(self.alloc, .{ .name = name, .text = source }, err);
+                return error.CompilationError;
+            },
+        };
         defer self.alloc.free(artifact.instructions);
         defer self.alloc.free(artifact.spans);
-        return try self.run(name, artifact);
+        try vm_ptr.setProgramDebugInfo(artifact.spans, "", name);
+        return try module.runCompiledModuleReport(vm_ptr, name, artifact.instructions);
     }
 };
 

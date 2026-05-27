@@ -21,9 +21,13 @@ pub const ExpandError = error{
 
 pub fn register(vm: *revo.VM) !void {
     const id = try vm.functions.create(.{ .native = revo.std_lib.define(&[_]revo.std_lib.TypeSpec{.table}, iter) });
-    try vm.globals.put(try vm.internAtom("__proc_iter"), Data.new.function(id));
+    const iter_val = Data.new.function(id);
+    try vm.globals.put(try vm.internAtom("__proc_iter"), iter_val);
+    try vm.stdlib_globals.put(try vm.internAtom("__proc_iter"), iter_val);
     const apply_id = try vm.functions.create(.{ .native = revo.std_lib.define(&[_]revo.std_lib.TypeSpec{ .function, .table }, procApply) });
-    try vm.globals.put(try vm.internAtom("__proc_apply"), Data.new.function(apply_id));
+    const apply_val = Data.new.function(apply_id);
+    try vm.globals.put(try vm.internAtom("__proc_apply"), apply_val);
+    try vm.stdlib_globals.put(try vm.internAtom("__proc_apply"), apply_val);
 }
 
 pub fn expandExpr(vm: *revo.VM, allocator: std.mem.Allocator, expr: *Node) ExpandError!*Node {

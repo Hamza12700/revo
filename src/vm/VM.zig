@@ -262,11 +262,7 @@ pub fn init(runtime: revo.Runtime) !VM {
     vm.sched.fibers.items[0].result = revo.core_atoms.data(.no_result);
 
     try revo.std_lib.register_stdlib(&vm);
-
-    var it = vm.globals.iterator();
-    while (it.next()) |entry| {
-        try vm.stdlib_globals.put(entry.key_ptr.*, entry.value_ptr.*);
-    }
+    try revo.lang.proc.register(&vm);
 
     // leave async backend nil unless explicitly configured
     vm.runtime.async_backend = null;
