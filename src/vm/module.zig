@@ -31,8 +31,12 @@ pub fn runImportedModule(vm: *revo.VM, source_path: []const u8, source: []const 
 }
 
 pub fn runImportedModuleReport(vm: *revo.VM, source_path: []const u8, source: []const u8) !revo.EvalResult {
+    const entries_table = try vm.tables.create();
+    const ns_id = try vm.createNamespace(source_path, entries_table);
+
     const artifact = switch (try lang.build(vm, .{ .name = source_path, .text = source }, .{
         .module_mode = true,
+        .module_namespace = ns_id,
     })) {
         .ok => |ok| ok,
         .err => |lang_err| {
@@ -42,7 +46,7 @@ pub fn runImportedModuleReport(vm: *revo.VM, source_path: []const u8, source: []
     };
     defer vm.runtime.alloc.free(artifact.instructions);
     defer vm.runtime.alloc.free(artifact.spans);
-    return runCompiledImportedModuleReport(vm, source_path, artifact.instructions);
+    return runCompiledImportedModuleReport(vm, source_path, artifact.instructions, ns_id);
 }
 
 fn swapFiberAndRun(vm: *revo.VM, source_path: []const u8, program: []const revo.Instruction) !struct { result: revo.EvalResult, prev: revo.VM.Fiber } {
@@ -96,6 +100,7 @@ pub fn runCompiledImportedModuleReport(
     vm: *revo.VM,
     source_path: []const u8,
     program: []const revo.Instruction,
+    ns_id: revo.NamespaceID,
 ) !revo.EvalResult {
     const mg = revo.VM.Globals.init(vm.runtime.alloc);
     const mcg = @TypeOf(vm.const_globals).init(vm.runtime.alloc);
@@ -112,10 +117,7 @@ pub fn runCompiledImportedModuleReport(
     }
 
     try vm.seedBootstrapGlobals(&vm.globals);
-    const exports_atom = try vm.internAtom("__module_pub_exports");
-    const exports_table = try vm.tables.create();
-    const ns = try vm.createNamespace(source_path, exports_table);
-    try vm.globals.put(exports_atom, ns);
+    const ns = Data.new.module(ns_id);
 
     var r = try swapFiberAndRun(vm, source_path, program);
     defer {
@@ -123,8 +125,7 @@ pub fn runCompiledImportedModuleReport(
         revo.VM.Fiber.deinit(&finished, vm.runtime.alloc);
     }
     if (r.result == .ok) {
-        const exports_value = vm.globals.get(exports_atom) orelse ns;
-        r.prev.result = exports_value;
+        r.prev.result = ns;
     }
     return r.result;
 }
@@ -226,7 +227,7 @@ pub const NamespaceID = usize;
 
 pub const Namespace = struct {
     path: []const u8,
-    exports: revo.memory.TableID,
+    entries: revo.memory.TableID,
 };
 
 pub const NamespacePool = struct {
@@ -253,14 +254,14 @@ pub const NamespacePool = struct {
         self.dead.deinit(self.alloc);
     }
 
-    pub fn create(self: *NamespacePool, path: []const u8, exports: revo.memory.TableID) !NamespaceID {
+    pub fn create(self: *NamespacePool, path: []const u8, entries: revo.memory.TableID) !NamespaceID {
         const owned_path = try self.alloc.dupe(u8, path);
         errdefer self.alloc.free(owned_path);
 
         if (self.dead.pop()) |id| {
             self.modules.items[id] = .{
                 .path = owned_path,
-                .exports = exports,
+                .entries = entries,
             };
             return id;
         }
@@ -268,7 +269,7 @@ pub const NamespacePool = struct {
         const id: NamespaceID = @intCast(self.modules.items.len);
         try self.modules.append(self.alloc, .{
             .path = owned_path,
-            .exports = exports,
+            .entries = entries,
         });
         if (id >= self.marks.capacity()) {
             try self.marks.resize(self.modules.items.len, false);
@@ -337,3 +338,27 @@ pub const NamespacePool = struct {
         return total;
     }
 };
+
+test "pub declarations seen in imported namespace" {
+    var vm = try revo.VM.init(testing.runtime());
+    defer vm.deinit();
+    const res = try runImportedModuleReport(&vm,
+        "test.rv",
+        \\ pub const x = 42
+        \\ const y = 99
+    );
+    try std.testing.expect(res == .ok);
+    const ns = vm.mainFiber().result;
+    try std.testing.expect(ns.asNamespace() != null);
+}
+
+test "private declarations do not leak from imported namespace" {
+    var vm = try revo.VM.init(testing.runtime());
+    defer vm.deinit();
+    const res = try runImportedModuleReport(&vm,
+        "test.rv",
+        \\ pub const pub_var = 42
+        \\ const priv_var = 99
+    );
+    try std.testing.expect(res == .ok);
+}

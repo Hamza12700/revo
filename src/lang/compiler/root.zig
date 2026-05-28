@@ -10,6 +10,7 @@ const LocalSlot = revo.LocalSlot;
 const ProgramCounter = revo.ProgramCounter;
 const Operand = revo.Operand;
 const Register = revo.opcode.Register;
+const memory = revo.memory;
 
 const ast = @import("../ast.zig");
 const Node = ast.Node;
@@ -67,6 +68,7 @@ pub fn lowerExprArtifactReport(
     expr: *const Node,
     test_mode: bool,
     module_mode: bool,
+    module_namespace: ?memory.NamespaceID,
 ) !ArtifactResult {
     var arena = std.heap.ArenaAllocator.init(vm.runtime.alloc);
     defer arena.deinit();
@@ -79,6 +81,10 @@ pub fn lowerExprArtifactReport(
         vm.runtime.alloc,
     );
     defer compiler.deinit();
+
+    if (module_namespace) |ns_id| {
+        compiler.module_namespace = ns_id;
+    }
 
     compiler.compileRoot(expr) catch |err| switch (err) {
         error.LoweringFailed => return .{ .err = compiler.failure.? },
@@ -124,6 +130,7 @@ pub const Compiler = struct {
     use_ir_first: bool = false,
     upvalue_cache: std.AutoHashMap(usize, usize) = undefined,
     type_aliases: std.StringHashMap(types.TypeInfo),
+    module_namespace: ?revo.NamespaceID = null,
 
     pub fn init(
         vm: *VM,
@@ -1183,6 +1190,13 @@ pub const Compiler = struct {
     }
 
     pub fn compileMod(self: *Compiler, name: []const u8, expr: *Node) InternalLowerError!void {
+        const source_name = self.vm.currentDebugSourceName() orelse "<mod>";
+        const nested_source = try std.fmt.allocPrint(self.alloc, "{s}::{s}", .{ source_name, name });
+        defer self.alloc.free(nested_source);
+
+        const entries_table = try self.vm.tables.create();
+        const ns_id = try self.vm.createNamespace(nested_source, entries_table);
+
         var temp_compiler = try Compiler.init(
             self.vm,
             self.test_mode,
@@ -1190,6 +1204,7 @@ pub const Compiler = struct {
             self.alloc,
             self.runtime_alloc,
         );
+        temp_compiler.module_namespace = ns_id;
         defer temp_compiler.deinit();
 
         temp_compiler.compileRoot(expr) catch |err| switch (err) {
@@ -1204,14 +1219,11 @@ pub const Compiler = struct {
         defer self.vm.runtime.alloc.free(artifact.instructions);
         defer self.vm.runtime.alloc.free(artifact.spans);
 
-        const source_name = self.vm.currentDebugSourceName() orelse "<mod>";
-        const nested_source = try std.fmt.allocPrint(self.alloc, "{s}::{s}", .{ source_name, name });
-        defer self.alloc.free(nested_source);
-
         const result = try VM.module.runCompiledImportedModuleReport(
             self.comp_vm,
             nested_source,
             artifact.instructions,
+            ns_id,
         );
         if (result == .err) {
             const eval_failure = result.err;
@@ -1344,7 +1356,7 @@ pub const Compiler = struct {
     }
 
     // export write:
-    // __module_pub_exports.<name> = <top_of_stack_value>
+    // namespace.<name> = <top_of_stack_value>
     fn emitPubExport(self: *Compiler, name: []const u8) InternalLowerError!void {
         std.debug.assert(self.active_registers > 0);
         try self.emitPubExportFrom(name, self.active_registers - 1);
@@ -1352,7 +1364,9 @@ pub const Compiler = struct {
 
     fn emitPubExportFrom(self: *Compiler, name: []const u8, value_reg: usize) InternalLowerError!void {
         std.debug.assert(self.active_registers > 0);
-        try emit.emit(self, .load_global, try self.vm.internAtom("__module_pub_exports"));
+        const ns_id = self.module_namespace orelse return;
+        const ns = self.vm.modules.get(ns_id) catch return;
+        try emit.@"const"(self, Data.new.table(ns.entries));
 
         const table_reg: usize = self.active_registers - 1;
         const instr: Instruction = .{

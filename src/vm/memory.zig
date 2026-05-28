@@ -11,6 +11,11 @@ pub const StructTypeID = usize;
 pub const StructInstanceID = usize;
 pub const NamespaceID = usize;
 
+pub const Entry = struct {
+    is_pub: bool,
+    value: Data,
+};
+
 // nanbox layout: numbers stored as raw f64; boxed values set BOX_MASK and hold tag+payload
 // canonicalize NaN to CANONICAL_NAN for stable bitwise checks
 pub const Type = enum(u4) {

@@ -238,7 +238,7 @@ pub fn processMarkStack(self: *VM) void {
                 if (id >= self.modules.modules.items.len)
                     continue;
                 const ns = self.modules.modules.items[id] orelse continue;
-                self.tables.mark(ns.exports, self);
+                self.tables.mark(ns.entries, self);
             },
         }
     }

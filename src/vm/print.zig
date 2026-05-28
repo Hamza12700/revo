@@ -80,14 +80,14 @@ pub fn writeData(self: Data, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.Re
                 try writer.writeAll("<dead-module>");
                 return;
             };
-            const exports = vm.tables.get(ns.exports) catch {
+            const entries = vm.tables.get(ns.entries) catch {
                 try writer.writeAll("<dead-module-exports>");
                 return;
             };
             if (mode == .debug) {
                 try writer.print("#ns<{s}> ", .{ns.path});
             }
-            exports.write(writer, vm, mode) catch try writer.writeAll("<module-unprintable>");
+            entries.write(writer, vm, mode) catch try writer.writeAll("<module-unprintable>");
         },
     }
 }

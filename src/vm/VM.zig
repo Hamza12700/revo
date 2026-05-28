@@ -391,27 +391,21 @@ pub fn clearModuleCache(self: *VM) void {
     self.module_cache.clearRetainingCapacity();
 }
 
-pub fn createNamespace(self: *VM, path: []const u8, exports_table: mem.TableID) !Data {
-    const id = try self.modules.create(path, exports_table);
-    return Data.new.module(id);
+pub fn createNamespace(self: *VM, path: []const u8, entries_table: mem.TableID) !mem.NamespaceID {
+    return try self.modules.create(path, entries_table);
 }
 
 pub fn moduleExportsTable(self: *VM, value: Data) !mem.TableID {
     if (value.asTable()) |table_id| return table_id;
     const ns_id = value.asNamespace() orelse return error.TypeError;
     const ns = self.modules.get(ns_id) catch return error.TypeError;
-    return ns.exports;
+    return ns.entries;
 }
 
 pub fn modulePath(self: *VM, value: Data) ![]const u8 {
     const ns_id = value.asNamespace() orelse return error.TypeError;
     const ns = self.modules.get(ns_id) catch return error.TypeError;
     return ns.path;
-}
-
-pub fn setNamespaceExports(self: *VM, ns_id: mem.NamespaceID, exports_table: mem.TableID) !void {
-    const ns = self.modules.get(ns_id) catch return;
-    ns.exports = exports_table;
 }
 
 pub fn addConstant(self: *VM, val: Data) !ConstantID {

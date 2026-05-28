@@ -29,6 +29,7 @@ pub fn build(vm: *VM, source: Source, opts: BuildOptions) !BuildResult {
         .source = source,
         .test_mode = opts.test_mode,
         .module_mode = opts.module_mode,
+        .module_namespace = opts.module_namespace,
     });
     return switch (lower_result) {
         .ok => |artifact| .{ .ok = artifact },
@@ -50,12 +51,14 @@ pub const LowerOptions = struct {
     source: ?Source = null,
     test_mode: bool = false,
     module_mode: bool = false,
+    module_namespace: ?@import("revo").memory.NamespaceID = null,
 };
 pub const BuildOptions = struct {
     include_default_macros: bool = true,
     install_debug_info: bool = true,
     test_mode: bool = false,
     module_mode: bool = false,
+    module_namespace: ?@import("revo").memory.NamespaceID = null,
 };
 
 pub const Parsed = struct {
@@ -125,6 +128,7 @@ pub fn lower(vm: *VM, expanded: Expanded, opts: LowerOptions) !LowerResult {
         expanded.root,
         opts.test_mode,
         opts.module_mode,
+        opts.module_namespace,
     );
     return switch (lowered) {
         .ok => |artifact| blk: {
