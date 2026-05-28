@@ -388,17 +388,16 @@ pub const Compiler = struct {
             .global => |binding| try self.compileBinding(binding, .global),
             .let_expr => |binding| try self.compileBinding(binding, .let),
             .decl => |d| {
-                // check inner node reflects the decl's pub flag so existing
-                // compileBinding and mod handling can use .is_pub
-                var inner: *Node = d.inner;
-                switch (inner.expr) {
-                    .con_expr => inner.expr.con_expr.is_pub = d.is_pub,
-                    .let_expr => inner.expr.let_expr.is_pub = d.is_pub,
-                    .global => inner.expr.global.is_pub = d.is_pub,
-                    .mod_expr => inner.expr.mod_expr.is_pub = d.is_pub,
+                // pub visibility is stored in Decl, propagate to inner for uniform export handling
+                var mutable_inner = d.inner;
+                switch (mutable_inner.expr) {
+                    .con_expr => |*b| b.is_pub = d.is_pub,
+                    .let_expr => |*b| b.is_pub = d.is_pub,
+                    .global => |*b| b.is_pub = d.is_pub,
+                    .mod_expr => |*m| m.is_pub = d.is_pub,
                     else => {},
                 }
-                return self.compile(inner, true);
+                return self.compile(mutable_inner, true);
             },
             .assign_expr => |assign| try values.compileAssign(self, assign.target, assign.value),
             .block => |exprs| try self.compileBlock(exprs),

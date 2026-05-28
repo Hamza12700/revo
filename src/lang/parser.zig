@@ -323,7 +323,6 @@ const Parser = struct {
                 self.allocExpr(token.span(), .{ .ident = token.text }),
             .kw_const, .kw_global, .kw_let, .kw_mod, .kw_struct, .kw_test, .kw_suite, .kw_proc => self.parseDecl(token, false),
             .kw_fn => self.parseFn(token),
-            .kw_macro => self.parseMacro(token),
             .kw_pub => self.parsePub(),
             .minus => self.parseUnary(.negate, 60, token),
             .kw_not => self.parseUnary(.not, 35, token),
@@ -346,6 +345,7 @@ const Parser = struct {
                 if (self.check(.ident)) return self.parseTypeAlias(token);
                 return self.allocExpr(token.span(), .{ .ident = token.text });
             },
+            .kw_macro => self.parseMacro(token),
             .eof => return error.UnexpectedToken,
             else => return error.UnexpectedToken,
         };
@@ -1348,9 +1348,11 @@ const Parser = struct {
     ) anyerror!*Node {
         const temp_target = try self.allocExpr(left.span, .{ .ident = pipe_temp_name });
         const temp_ref = try self.allocExpr(left.span, .{ .ident = pipe_temp_name });
-        const bind = try self.allocExpr(left.span, .{ .con_expr = .{
-            .target = temp_target,
-            .value = left,
+        const binding: ast.Binding = .{ .target = temp_target, .value = left };
+        const bind = try self.allocExpr(left.span, .{ .decl = .{
+            .inner = try self.allocExpr(left.span, .{ .con_expr = binding }),
+            .kind = ast.DeclKind.con,
+            .is_pub = false,
         } });
 
         const call_args = try self.alloc.alloc(*Node, args.len + 1);
@@ -1372,9 +1374,11 @@ const Parser = struct {
 
     fn wrapPipeLexical(self: *Parser, left: *Node, right: *Node) anyerror!*Node {
         const underscore = try self.allocExpr(left.span, .{ .ident = "_" });
-        const bind = try self.allocExpr(left.span, .{ .con_expr = .{
-            .target = underscore,
-            .value = left,
+        const binding: ast.Binding = .{ .target = underscore, .value = left };
+        const bind = try self.allocExpr(left.span, .{ .decl = .{
+            .inner = try self.allocExpr(left.span, .{ .con_expr = binding }),
+            .kind = ast.DeclKind.con,
+            .is_pub = false,
         } });
         const exprs = try self.alloc.alloc(*Node, 2);
         errdefer self.alloc.free(exprs);
