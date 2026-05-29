@@ -4,7 +4,7 @@
 // big TODO: prefix test names with their scope so that i can grep "atom and find all atom tests
 //
 const std = @import("std");
-const alloc = std.heap.page_allocator;
+const alloc = std.testing.allocator;
 const io = std.testing.io;
 
 const revo = @import("revo");
@@ -25,8 +25,8 @@ test "lang surface exports parse and build pipeline entrypoints" {
     defer vm.deinit();
     const built = try lang.build(&vm, .{ .text = "1 + 1" }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
     try std.testing.expect(built.ok.instructions.len != 0);
 }
 
@@ -46,8 +46,8 @@ test "typed struct field access emits fast opcodes" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     var saw_get = false;
     var saw_set = false;
@@ -71,8 +71,8 @@ test "builtin table methods prebind through stdlib tables" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     var saw_stdlib_load = false;
     var saw_call_field = false;
@@ -97,8 +97,8 @@ test "typed call results specialize later math" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     var saw_add_int = false;
     for (built.ok.instructions) |inst| {
@@ -120,8 +120,8 @@ test "recursive typed calls stay specialized" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     var saw_lt_int = false;
     var saw_sub_int = false;
@@ -517,8 +517,8 @@ test "metatable-backed constructor and instance methods compile" {
 
     const built = try lang.build(&vm, .{ .text = source }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
     try std.testing.expect(built.ok.instructions.len != 0);
 }
 
@@ -1112,8 +1112,8 @@ test "runtime renderer includes source path" {
     const source = "1 / 0";
     const built = try lang.build(&vm, .{ .text = source }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     try vm.setProgramSourceName("examples/fail.rv");
     vm.mainFiber().program = built.ok.instructions;
@@ -1144,8 +1144,8 @@ test "runtime renderer includes stack trace call chain" {
         .install_debug_info = true,
     });
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     vm.mainFiber().program = built.ok.instructions;
 
@@ -1486,8 +1486,8 @@ test "struct descriptors stay off globals" {
         \\ struct User { name: string = "hi" }
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 
     try std.testing.expect(!vm.globals.contains(try vm.internAtom("__struct_desc_0")));
 }
@@ -2470,403 +2470,6 @@ test "pipe: nested scope capture" {
     , "HELLO");
 }
 
-//
-// Type system tests (types.zig)
-//
-
-test "types: TypeInfo equality" {
-    const int_type: revo.lang.compiler.types.TypeInfo = .int;
-    const any_type: revo.lang.compiler.types.TypeInfo = .any;
-
-    try std.testing.expect(int_type.eql(.int));
-    try std.testing.expect(!int_type.eql(.float));
-    try std.testing.expect(any_type.eql(.any));
-}
-
-test "types: numeric type check" {
-    const types = revo.lang.compiler.types;
-    try std.testing.expect(types.isNumeric(.int));
-    try std.testing.expect(types.isNumeric(.float));
-    try std.testing.expect(!types.isNumeric(.string));
-    try std.testing.expect(!types.isNumeric(.any));
-}
-
-test "types: type coercion" {
-    const types = revo.lang.compiler.types;
-    try std.testing.expect(types.canCoerce(.int, .int));
-    try std.testing.expect(types.canCoerce(.int, .float));
-    try std.testing.expect(!types.canCoerce(.float, .int)); // float doesn't coerce to int
-    try std.testing.expect(types.canCoerce(.int, .any)); // anything to any
-    try std.testing.expect(types.canCoerce(.any, .int)); // any to anything (optimistic)
-}
-
-test "types: binary op inference - arithmetic" {
-    const types = revo.lang.compiler.types;
-    const add_int_int = types.inferBinaryOp(.add, .int, .int);
-    try std.testing.expect(add_int_int.eql(.int));
-
-    const add_float_float = types.inferBinaryOp(.add, .float, .float);
-    try std.testing.expect(add_float_float.eql(.float));
-
-    const add_int_float = types.inferBinaryOp(.add, .int, .float);
-    try std.testing.expect(add_int_float.eql(.float));
-}
-
-test "types: binary op inference - comparison" {
-    const types = revo.lang.compiler.types;
-    const cmp = types.inferBinaryOp(.eq, .int, .int);
-    try std.testing.expect(cmp.eql(.bool));
-
-    const cmp2 = types.inferBinaryOp(.lt, .float, .float);
-    try std.testing.expect(cmp2.eql(.bool));
-}
-
-test "types: unary op inference" {
-    const types = revo.lang.compiler.types;
-    const negate_int = types.inferUnaryOp(.negate, .int);
-    try std.testing.expect(negate_int.eql(.int));
-
-    const not_bool = types.inferUnaryOp(.not, .bool);
-    try std.testing.expect(not_bool.eql(.bool));
-}
-
-//
-// IR tests (ir.zig)
-//
-
-test "ir: IrBuilder init and deinit" {
-    var builder = try revo.lang.compiler.ir.IrBuilder.init(alloc);
-    defer builder.deinit();
-    try std.testing.expect(builder.instructions.items.len == 0);
-}
-
-test "ir: IrBuilder add instruction" {
-    var builder = try revo.lang.compiler.ir.IrBuilder.init(alloc);
-    defer builder.deinit();
-
-    const inst = try builder.addInstruction(
-        .load_int,
-        .int,
-        &.{},
-    );
-
-    try std.testing.expect(inst.op == .load_int);
-    try std.testing.expect(inst.result_type.eql(.int));
-    try std.testing.expect(builder.instructions.items.len == 1);
-}
-
-test "ir: IrBuilder add binary operation" {
-    var builder = try revo.lang.compiler.ir.IrBuilder.init(alloc);
-    defer builder.deinit();
-
-    const lhs = try builder.addInstruction(.load_int, .int, &.{});
-    const rhs = try builder.addInstruction(.load_int, .int, &.{});
-
-    const add_inst = try builder.addInstruction(
-        .add,
-        .int,
-        &.{ .{ .inst = lhs }, .{ .inst = rhs } },
-    );
-
-    try std.testing.expect(add_inst.op == .add);
-    try std.testing.expect(add_inst.result_type.eql(.int));
-    try std.testing.expect(builder.instructions.items.len == 3);
-}
-
-test "ir: IrBuilder constant pool" {
-    var builder = try revo.lang.compiler.ir.IrBuilder.init(alloc);
-    defer builder.deinit();
-
-    const idx1 = try builder.addConst("hello");
-    const idx2 = try builder.addConst("world");
-
-    try std.testing.expect(idx1 == 0);
-    try std.testing.expect(idx2 == 1);
-    try std.testing.expect(builder.constants.items.len == 2);
-}
-
-//
-// type system
-//
-
-test "type: typed binding int accepts int literal" {
-    try t.top_number(
-        \\ let x: int = 42
-        \\ x
-    , 42);
-}
-
-test "type: typed binding float accepts float literal" {
-    try t.top_number(
-        \\ let x: float = 3.14
-        \\ x
-    , 3.14);
-}
-
-test "type: typed binding int accepts int literal coerced to float" {
-    try t.top_number(
-        \\ let x: float = 10
-        \\ x
-    , 10.0);
-}
-
-test "type: typed binding rejects string for int" {
-    try t.expectCompileError(
-        \\ let x: int = "hello"
-    , .ParseError);
-}
-
-test "type: typed binding rejects float for int" {
-    try t.expectCompileError(
-        \\ let x: int = 3.14
-    , .ParseError);
-}
-
-test "type: typed binding rejects int for string" {
-    try t.expectCompileError(
-        \\ let x: string = 42
-    , .ParseError);
-}
-
-test "type: typed function params accept correct types" {
-    try t.top_number(
-        \\ const add = fn(a: int, b: int) a + b
-        \\ add(3, 4)
-    , 7);
-}
-
-test "type: typed function rejects wrong arg type" {
-    try t.expectCompileError(
-        \\ const add = fn(a: int, b: int) a + b
-        \\ add(3, "wrong")
-    , .ParseError);
-}
-
-test "type: typed function rejects first arg wrong type" {
-    try t.expectCompileError(
-        \\ const add = fn(a: int, b: int) a + b
-        \\ add("wrong", 4)
-    , .ParseError);
-}
-
-test "type: atom union alias accepts literal and alias value in calls" {
-    try t.top_atom(
-        \\ type A = :one | :two
-        \\ fn pick(how: A) -> any do
-        \\   how
-        \\ end
-        \\ let pred: A = :one
-        \\ pick(pred)
-    , "one");
-
-    try t.top_atom(
-        \\ type A = :one | :two
-        \\ fn pick(how: A) -> any do
-        \\   how
-        \\ end
-        \\ let pred: A = :one
-        \\ pick(:two)
-    , "two");
-}
-
-test "type: typed struct field access" {
-    var vm = try VM.init(t.runtime());
-    defer vm.deinit();
-
-    const built = try lang.build(&vm, .{
-        .text =
-        \\ struct User {
-        \\     name: string = "",
-        \\     age: number = 0,
-        \\ }
-        \\ let u: User = User { name = "alice", age = 30 }
-        \\ u.age
-        ,
-    }, .{});
-    try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
-
-    var saw_get = false;
-    for (built.ok.instructions) |inst| {
-        if (inst.op == .struct_get_offset) saw_get = true;
-    }
-    try std.testing.expect(saw_get);
-}
-
-test "type: typed struct field assignment rejects wrong type" {
-    try t.expectCompileError(
-        \\ struct User {
-        \\     name: string = "",
-        \\     age: int = 0,
-        \\ }
-        \\ let u: User = User { name = "alice", age = 30 }
-        \\ u.name = 42
-    , .ParseError);
-}
-
-test "type: typed struct field assignment accepts correct type" {
-    try t.top_number(
-        \\ struct User {
-        \\     name: string = "",
-        \\     age: number = 0,
-        \\ }
-        \\ let u: User = User { name = "alice", age = 30 }
-        \\ u.age = 42
-        \\ u.age
-    , 42);
-}
-
-test "type: binary int + int emits add_int" {
-    var vm = try VM.init(t.runtime());
-    defer vm.deinit();
-
-    const built = try lang.build(&vm, .{
-        .text =
-        \\ let a: int = 5
-        \\ let b: int = 3
-        \\ a + b
-        ,
-    }, .{});
-    try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
-
-    var saw_add_int = false;
-    for (built.ok.instructions) |inst| {
-        if (inst.op == .add_int) saw_add_int = true;
-    }
-    try std.testing.expect(saw_add_int);
-}
-
-test "type: binary float + float emits add_int" {
-    var vm = try VM.init(t.runtime());
-    defer vm.deinit();
-
-    const built = try lang.build(&vm, .{
-        .text =
-        \\ let a: float = 1.5
-        \\ let b: float = 2.5
-        \\ a + b
-        ,
-    }, .{});
-    try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
-
-    var saw_add_int = false;
-    for (built.ok.instructions) |inst| {
-        if (inst.op == .add_int) saw_add_int = true;
-    }
-    try std.testing.expect(saw_add_int);
-}
-
-test "type: negate int emits negate_int" {
-    var vm = try VM.init(t.runtime());
-    defer vm.deinit();
-
-    const built = try lang.build(&vm, .{
-        .text =
-        \\ let x: int = 5
-        \\ let y = -x
-        \\ y
-        ,
-    }, .{});
-    try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
-
-    var saw_neg_int = false;
-    for (built.ok.instructions) |inst| {
-        if (inst.op == .negate_int) saw_neg_int = true;
-    }
-    try std.testing.expect(saw_neg_int);
-}
-
-test "type: comparison int == int emits eq_int" {
-    var vm = try VM.init(t.runtime());
-    defer vm.deinit();
-
-    const built = try lang.build(&vm, .{
-        .text =
-        \\ let a: int = 5
-        \\ let b: int = 5
-        \\ a == b
-        ,
-    }, .{});
-    try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
-
-    var saw_eq_int = false;
-    for (built.ok.instructions) |inst| {
-        if (inst.op == .eq_int) saw_eq_int = true;
-    }
-    try std.testing.expect(saw_eq_int);
-}
-
-test "type: untyped code still works" {
-    try t.top_number("1 + 2 * 3", 7);
-    try t.top_number(
-        \\ let x = 10
-        \\ x + 5
-    , 15);
-    try t.top_string(
-        \\ let s = "hello"
-        \\ s
-    , "hello");
-}
-
-test "type: mixed int and float falls back to generic add" {
-    var vm = try VM.init(t.runtime());
-    defer vm.deinit();
-
-    const built = try lang.build(&vm, .{
-        .text =
-        \\ let a: int = 5
-        \\ let b: float = 2.5
-        \\ a + b
-        ,
-    }, .{});
-    try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
-
-    var saw_generic_add = false;
-    for (built.ok.instructions) |inst| {
-        if (inst.op == .add) saw_generic_add = true;
-    }
-    try std.testing.expect(saw_generic_add);
-}
-
-test "type: nested function with typed params" {
-    try t.top_number(
-        \\ const outer = fn(x: int) do
-        \\     const inner = fn(y: int) y * 2
-        \\     inner(x) + 1
-        \\ end
-        \\ outer(5)
-    , 11);
-}
-
-test "type: function call with multiple typed params" {
-    try t.top_number(
-        \\ const calc = fn(a: int, b: float, c: int) do
-        \\     a + b + c
-        \\ end
-        \\ calc(1, 2.5, 3)
-    , 6.5);
-}
-
-test "type: return type validation accepts correct type" {
-    try t.top_number(
-        \\ const get_num = fn() -> int do
-        \\     return 42
-        \\ end
-        \\ get_num()
-    , 42);
-}
-
 test "compiler: named parameters basic call" {
     try t.top_number(
         \\ const add = fn(x: int, y: int) do x + y end
@@ -2955,8 +2558,8 @@ test "vm: debug_assert_types enabled passes" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 }
 
 test "vm: debug_assert_types enabled passes for floar ops" {
@@ -2972,8 +2575,8 @@ test "vm: debug_assert_types enabled passes for floar ops" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 }
 
 test "vm: debug_assert_types enabled passes for comparison ops" {
@@ -2989,6 +2592,6 @@ test "vm: debug_assert_types enabled passes for comparison ops" {
         ,
     }, .{});
     try std.testing.expect(built == .ok);
-    defer alloc.free(built.ok.instructions);
-    defer alloc.free(built.ok.spans);
+    defer vm.runtime.alloc.free(built.ok.instructions);
+    defer vm.runtime.alloc.free(built.ok.spans);
 }

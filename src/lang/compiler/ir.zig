@@ -326,3 +326,54 @@ fn selectOpcode(op: IrOp, t: types_mod.TypeInfo) Opcode {
         .struct_set_offset => .struct_set_offset,
     };
 }
+
+test "IrBuilder init and deinit" {
+    var builder = try revo.lang.compiler.ir.IrBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    try std.testing.expect(builder.instructions.items.len == 0);
+}
+
+test "IrBuilder add instruction" {
+    var builder = try revo.lang.compiler.ir.IrBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+
+    const inst = try builder.addInstruction(
+        .load_int,
+        .int,
+        &.{},
+    );
+
+    try std.testing.expect(inst.op == .load_int);
+    try std.testing.expect(inst.result_type.eql(.int));
+    try std.testing.expect(builder.instructions.items.len == 1);
+}
+
+test "IrBuilder add binary operation" {
+    var builder = try revo.lang.compiler.ir.IrBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+
+    const lhs = try builder.addInstruction(.load_int, .int, &.{});
+    const rhs = try builder.addInstruction(.load_int, .int, &.{});
+
+    const add_inst = try builder.addInstruction(
+        .add,
+        .int,
+        &.{ .{ .inst = lhs }, .{ .inst = rhs } },
+    );
+
+    try std.testing.expect(add_inst.op == .add);
+    try std.testing.expect(add_inst.result_type.eql(.int));
+    try std.testing.expect(builder.instructions.items.len == 3);
+}
+
+test "IrBuilder constant pool" {
+    var builder = try revo.lang.compiler.ir.IrBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+
+    const idx1 = try builder.addConst("hello");
+    const idx2 = try builder.addConst("world");
+
+    try std.testing.expect(idx1 == 0);
+    try std.testing.expect(idx2 == 1);
+    try std.testing.expect(builder.constants.items.len == 2);
+}
