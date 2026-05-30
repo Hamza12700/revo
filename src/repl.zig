@@ -3,6 +3,7 @@ const revo = @import("revo");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const VM = revo.VM;
+const builtin = @import("builtin");
 
 pub const Backend = build_options.@"build.build.ReplBackend";
 pub const backend: Backend = build_options.repl_backend;
@@ -15,6 +16,7 @@ const signal_c = if (backend != .none) @cImport(@cInclude("signal.h")) else stru
 const libc = @cImport({
     @cInclude("stdlib.h");
     @cInclude("string.h");
+    @cInclude("unistd.h");
 });
 
 const IsoclineContext = struct {
@@ -23,6 +25,45 @@ const IsoclineContext = struct {
 };
 
 var isocline_ctx: ?IsoclineContext = null;
+
+const splash_texts = [_][]const u8{
+    "hi",
+    "make your readme .nfo",
+    "It took Python 33 years to get syntax highlighting in REPL btw",
+    "used to be the first language on earth",
+    "try :h [function_name] or :h [any_variable]",
+    "on course to have a negative amount of dependencies by 2030",
+    switch (builtin.os.tag) {
+        .hurd => "monolithic kernels suck",
+        .linux => "linux is better than macos",
+        .windows => "windows is better than linux",
+        .macos => "macos is the best unix",
+        .freebsd => "freebsd is better than linux",
+        .netbsd => "freebsd is too bloated",
+        .openbsd => "freebsd is too vulnerable",
+        .plan9 => "computers are made for mice",
+        .serenity => "ladybird is better than gecko",
+        .haiku => "ladybird is better than gecko",
+        else => "woah",
+    },
+};
+
+fn splashText(seed: usize) []const u8 {
+    const idx = seed % splash_texts.len;
+    return splash_texts[idx];
+}
+
+fn splashSeed(vm: *VM, banner_buffer: *[128]u8, out: *std.Io.Writer) usize {
+    var seed: u64 = @intFromPtr(vm);
+    seed ^= @intFromPtr(banner_buffer);
+    seed ^= @intFromPtr(out);
+    seed ^= @intFromPtr(&splash_texts);
+    if (@import("builtin").target.requiresLibC())
+        seed ^= @as(u64, @intCast(libc.getpid())) << 32;
+    seed ^= @as(u64, @intFromPtr(&splashSeed)) >> 1;
+    var rng = std.Random.SplitMix64.init(seed);
+    return @intCast(rng.next());
+}
 
 fn isoclineCompleter(cenv: ?*isocline_c.ic_completion_env_t, prefix: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
     if (cenv == null) return;
@@ -372,6 +413,9 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
         "revo {s} -- repl ({s} backend)\ntype :q to exit, :clear to reset session\n",
         .{ build_options.version, @tagName(backend) },
     );
+    try writer.print("\x1b[0;95m# {s}\x1b[0m\n", .{
+        splashText(splashSeed(vm, &banner_buffer, writer)),
+    });
     try writer.flush();
 
     const signal_was_set = backend != .none and OS != .wasi;
@@ -501,4 +545,13 @@ test "repl can call a global function later" {
     const written = env.out.written();
     std.debug.print("OUT after step2 ({d}): '{s}'\n", .{ written.len, written });
     try std.testing.expect(std.mem.indexOfPos(u8, written, before_call, "4\n") != null);
+}
+
+test "splash selection wraps by seed" {
+    try std.testing.expectEqualStrings(splash_texts[0], splashText(0));
+    try std.testing.expectEqualStrings(splash_texts[1], splashText(1));
+    try std.testing.expectEqualStrings(
+        splash_texts[0],
+        splashText(splash_texts.len),
+    );
 }
