@@ -247,7 +247,6 @@ pub fn expectCompileError(source: []const u8, expected: lang.LowerErrorKind) !vo
         },
         .err => |failure| switch (failure) {
             .lower => |lower| {
-                defer lang.deinitError(alloc, failure);
                 try std.testing.expectEqual(expected, lower.kind);
                 vm.runtime.resetDiagArena();
             },
@@ -280,7 +279,6 @@ pub fn expectCompileFailure(
             .parse => return error.ExpectedLowerFailure,
             .expand => return error.ExpectedLowerFailure,
             .lower => |lower| {
-                defer lang.deinitError(alloc, failure);
                 try std.testing.expectEqual(expected_kind, lower.kind);
                 const span = lang.diagnostic.primarySpan(lower.report).?;
                 const msg = lang.diagnostic.firstError(lower.report).?;

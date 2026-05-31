@@ -223,7 +223,7 @@ fn handleBuildError(_: std.process.Init, gpa: Allocator, source_name: []const u8
 }
 
 fn compileSource(init: std.process.Init, vm: *VM, gpa: Allocator, source_name: []const u8, source_text: []const u8, test_mode: bool) !Artifact {
-    var ws = try revo.lang.Workspace.init(vm, gpa);
+    var ws = try revo.lang.Workspace.initWithVm(vm, gpa);
     defer ws.deinit();
 
     const file_id = try ws.open(source_name, source_text);

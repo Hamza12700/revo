@@ -235,7 +235,7 @@ pub const Session = struct {
         return .{
             .vm = vm,
             .gpa = gpa,
-            .workspace = try revo.lang.Workspace.init(vm, gpa),
+            .workspace = try revo.lang.Workspace.initWithVm(vm, gpa),
             .source_acc = try std.ArrayList(u8).initCapacity(gpa, 256),
         };
     }

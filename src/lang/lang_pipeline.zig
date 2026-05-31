@@ -186,8 +186,12 @@ pub fn renderError(allocator: std.mem.Allocator, writer: *std.Io.Writer, source:
 }
 
 pub fn deinitError(alloc: std.mem.Allocator, err: Error) void {
-    _ = alloc;
-    _ = err;
+    var mutable = err;
+    switch (mutable) {
+        .parse => |*failure| failure.report.deinit(alloc),
+        .expand => |*failure| failure.report.deinit(alloc),
+        .lower => |*failure| failure.report.deinit(alloc),
+    }
 }
 
 pub fn parseSource(allocator: std.mem.Allocator, source: []const u8) !*Node {

@@ -465,11 +465,17 @@ pub fn compileStruct(
         }
     }
 
-    const type_id = if (field_defs.items.len > 0)
+    const field_slice = try field_defs.toOwnedSlice(self.alloc);
+    errdefer self.alloc.free(field_slice);
+
+    if (self.struct_layouts.fetchRemove(name)) |kv| self.alloc.free(kv.value);
+    try self.struct_layouts.put(name, field_slice);
+
+    const type_id = if (field_slice.len > 0)
         try self.struct_layouter.registerType(
             self.vm,
             name,
-            field_defs.items,
+            field_slice,
         )
     else
         try self.vm.struct_types.registerType(

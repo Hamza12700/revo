@@ -2,6 +2,7 @@ const std = @import("std");
 
 const revo = @import("revo");
 const lang = @import("./root.zig");
+const semantic = @import("semantic.zig");
 const VM = revo.VM;
 
 pub const FileId = u32;
@@ -25,6 +26,13 @@ const CacheEntry = struct {
     opts: lang.BuildOptions,
     artifact: lang.Artifact,
     symbols: []Symbol,
+};
+
+const InspectCacheEntry = struct {
+    version: u32,
+    opts: lang.BuildOptions,
+    symbols: []Symbol,
+    dependencies: []FileId,
 };
 
 pub const Analysis = struct {
@@ -88,26 +96,38 @@ pub const Hover = struct {
 
 pub const Workspace = struct {
     alloc: std.mem.Allocator,
-    vm: *VM,
+    vm: ?*VM,
     files: std.ArrayList(FileEntry),
     file_index: std.AutoHashMap(FileId, usize),
     file_names: std.StringHashMap(FileId),
     dependencies: std.AutoHashMap(FileId, []FileId),
     reverse_deps: std.AutoHashMap(FileId, []FileId),
     cache: std.AutoHashMap(FileId, CacheEntry),
+    inspect_cache: std.AutoHashMap(FileId, InspectCacheEntry),
     next_file_id: FileId = 1,
 
-    pub fn init(vm: *VM, alloc: std.mem.Allocator) !Workspace {
+    pub fn init(alloc: std.mem.Allocator) !Workspace {
         return .{
             .alloc = alloc,
-            .vm = vm,
+            .vm = null,
             .files = try std.ArrayList(FileEntry).initCapacity(alloc, 8),
             .file_index = std.AutoHashMap(FileId, usize).init(alloc),
             .file_names = std.StringHashMap(FileId).init(alloc),
             .dependencies = std.AutoHashMap(FileId, []FileId).init(alloc),
             .reverse_deps = std.AutoHashMap(FileId, []FileId).init(alloc),
             .cache = std.AutoHashMap(FileId, CacheEntry).init(alloc),
+            .inspect_cache = std.AutoHashMap(FileId, InspectCacheEntry).init(alloc),
         };
+    }
+
+    pub fn initWithVm(vm: *VM, alloc: std.mem.Allocator) !Workspace {
+        var workspace = try Workspace.init(alloc);
+        workspace.vm = vm;
+        return workspace;
+    }
+
+    pub fn attachVm(self: *Workspace, vm: *VM) void {
+        self.vm = vm;
     }
 
     pub fn deinit(self: *Workspace) void {
@@ -120,6 +140,7 @@ pub const Workspace = struct {
         self.dependencies.deinit();
         self.reverse_deps.deinit();
         self.cache.deinit();
+        self.inspect_cache.deinit();
     }
 
     pub fn open(self: *Workspace, name: []const u8, text: []const u8) !FileId {
@@ -224,12 +245,13 @@ pub const Workspace = struct {
         opts: lang.BuildOptions,
     ) !Analysis {
         const snap = self.snapshot(id) orelse return error.FileNotOpen;
+        const vm = self.vm orelse return error.VmUnavailable;
         if (self.cache.get(id)) |cached| {
             if (cached.version == snap.version and sameOpts(cached.opts, opts)) {
                 const artifact = try copyArtifact(alloc, cached.artifact);
                 errdefer deinitArtifact(alloc, artifact);
                 if (opts.install_debug_info) {
-                    try self.vm.setProgramDebugInfo(artifact.spans, snap.text, snap.name);
+                    try vm.setProgramDebugInfo(artifact.spans, snap.text, snap.name);
                 }
                 return .{
                     .snapshot = snap,
@@ -241,23 +263,52 @@ pub const Workspace = struct {
             }
         }
 
-        const build_result = try lang.build(self.vm, .{
+        var arena = std.heap.ArenaAllocator.init(self.alloc);
+        defer arena.deinit();
+
+        const parsed = try lang.parse(arena.allocator(), .{
+            .name = snap.name,
+            .text = snap.text,
+        }, .{
+            .include_default_macros = opts.include_default_macros,
+        });
+
+        if (parsed == .err) {
+            self.removeDeps(id);
+            var report = try parsed.err.report.copy(alloc);
+            report.source_name = try alloc.dupe(u8, snap.name);
+            report.source = try alloc.dupe(u8, snap.text);
+            return .{
+                .snapshot = snap,
+                .diagnostics = .{ .parse = .{
+                    .kind = parsed.err.kind,
+                    .report = report,
+                } },
+                .cached = false,
+                .symbols = try self.alloc.alloc(Symbol, 0),
+                .dependencies = try self.alloc.alloc(FileId, 0),
+            };
+        }
+
+        const root = parsed.ok.root;
+        const symbols = try self.collectSymbolsFromParsed(root);
+        defer self.alloc.free(symbols);
+        const deps = try self.collectDepsFromParsed(snap, root);
+        errdefer self.alloc.free(deps);
+        try self.updateDeps(id, deps);
+
+        const build_result = try lang.build(vm, .{
             .name = snap.name,
             .text = snap.text,
         }, opts);
-        const symbols = try self.collectSymbols(snap, opts);
-        errdefer self.alloc.free(symbols);
 
         return switch (build_result) {
             .ok => |artifact| blk: {
-                errdefer deinitArtifact(self.vm.runtime.alloc, artifact);
+                errdefer deinitArtifact(vm.runtime.alloc, artifact);
                 const cache_artifact = try copyArtifact(self.alloc, artifact);
                 errdefer deinitArtifact(self.alloc, cache_artifact);
-                const deps = try self.collectDeps(snap, opts);
-                errdefer self.alloc.free(deps);
                 const cache_symbols = try copySymbols(self.alloc, symbols);
                 errdefer self.alloc.free(cache_symbols);
-                try self.updateDeps(id, deps);
                 try self.putCache(id, snap.version, opts, cache_artifact, cache_symbols);
                 const copy = try copyArtifact(alloc, artifact);
                 errdefer deinitArtifact(alloc, copy);
@@ -271,7 +322,7 @@ pub const Workspace = struct {
             },
             .err => |err| .{
                 .snapshot = snap,
-                .diagnostics = err,
+                .diagnostics = try copyError(alloc, err, snap.name, snap.text),
                 .cached = false,
                 .symbols = try copySymbols(alloc, symbols),
                 .dependencies = try self.copyDeps(id),
@@ -291,19 +342,19 @@ pub const Workspace = struct {
     }
 
     pub fn diagnostics(self: *Workspace, alloc: std.mem.Allocator, id: FileId, opts: lang.BuildOptions) !?lang.Error {
-        var analysis = try self.analyzeDetailed(alloc, id, opts);
+        var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         return analysis.diagnostics;
     }
 
     pub fn documentSymbols(self: *Workspace, alloc: std.mem.Allocator, id: FileId, opts: lang.BuildOptions) ![]Symbol {
-        var analysis = try self.analyzeDetailed(alloc, id, opts);
+        var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         return try copySymbols(alloc, analysis.symbols);
     }
 
     pub fn definition(self: *Workspace, alloc: std.mem.Allocator, id: FileId, pos: Position, opts: lang.BuildOptions) !?Location {
-        var analysis = try self.analyzeDetailed(alloc, id, opts);
+        var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
         const name = wordAtPosition(snap.text, pos) orelse return null;
@@ -311,7 +362,7 @@ pub const Workspace = struct {
     }
 
     pub fn hover(self: *Workspace, alloc: std.mem.Allocator, id: FileId, pos: Position, opts: lang.BuildOptions) !?Hover {
-        var analysis = try self.analyzeDetailed(alloc, id, opts);
+        var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
         const name = wordAtPosition(snap.text, pos) orelse return null;
@@ -329,7 +380,7 @@ pub const Workspace = struct {
     }
 
     pub fn references(self: *Workspace, alloc: std.mem.Allocator, id: FileId, pos: Position, opts: lang.BuildOptions) ![]Location {
-        var analysis = try self.analyzeDetailed(alloc, id, opts);
+        var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
         const name = wordAtPosition(snap.text, pos) orelse return self.alloc.alloc(Location, 0);
@@ -341,6 +392,80 @@ pub const Workspace = struct {
         defer alloc.free(deps_it);
         for (deps_it) |dep| try self.collectReferencesInFile(alloc, dep, name, &out, opts);
         return out.toOwnedSlice(alloc);
+    }
+
+    pub fn inspectDetailed(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        opts: lang.BuildOptions,
+    ) !Analysis {
+        const snap = self.snapshot(id) orelse return error.FileNotOpen;
+        if (self.inspect_cache.get(id)) |cached| {
+            if (cached.version == snap.version and sameOpts(cached.opts, opts)) {
+                return .{
+                    .snapshot = snap,
+                    .cached = true,
+                    .symbols = try copySymbols(alloc, cached.symbols),
+                    .dependencies = try self.copyDeps(id),
+                };
+            }
+        }
+        var arena = std.heap.ArenaAllocator.init(self.alloc);
+        defer arena.deinit();
+
+        const parsed = try lang.parse(arena.allocator(), .{
+            .name = snap.name,
+            .text = snap.text,
+        }, .{
+            .include_default_macros = opts.include_default_macros,
+        });
+
+        if (parsed == .err) {
+            self.removeDeps(id);
+            var report = try parsed.err.report.copy(alloc);
+            report.source_name = try alloc.dupe(u8, snap.name);
+            report.source = try alloc.dupe(u8, snap.text);
+            return .{
+                .snapshot = snap,
+                .diagnostics = .{ .parse = .{
+                    .kind = parsed.err.kind,
+                    .report = report,
+                } },
+                .cached = false,
+                .symbols = try self.alloc.alloc(Symbol, 0),
+                .dependencies = try self.alloc.alloc(FileId, 0),
+            };
+        }
+
+        const root = parsed.ok.root;
+        const symbols = try self.collectSymbolsFromParsed(root);
+        errdefer self.alloc.free(symbols);
+        const deps = try self.collectDepsFromParsed(snap, root);
+        errdefer self.alloc.free(deps);
+        try self.updateDeps(id, deps);
+        const semantic_error = try semantic.analyze(alloc, root, snap.name, snap.text);
+        if (semantic_error) |err| {
+            return .{
+                .snapshot = snap,
+                .diagnostics = err,
+                .cached = false,
+                .symbols = symbols,
+                .dependencies = try self.copyDeps(id),
+            };
+        }
+        const cache_symbols = try copySymbols(self.alloc, symbols);
+        errdefer self.alloc.free(cache_symbols);
+        const cache_deps = try self.copyDeps(id);
+        errdefer self.alloc.free(cache_deps);
+        try self.putInspectCache(id, snap.version, opts, cache_symbols, cache_deps);
+
+        return .{
+            .snapshot = snap,
+            .cached = false,
+            .symbols = symbols,
+            .dependencies = cache_deps,
+        };
     }
 
     fn putCache(
@@ -384,6 +509,10 @@ pub const Workspace = struct {
             deinitArtifact(self.alloc, kv.value.artifact);
             self.alloc.free(kv.value.symbols);
         }
+        if (self.inspect_cache.fetchRemove(id)) |kv| {
+            self.alloc.free(kv.value.symbols);
+            self.alloc.free(kv.value.dependencies);
+        }
 
         if (self.reverse_deps.get(id)) |dependents| {
             for (dependents) |dep| self.invalidateCacheImpl(dep, visited);
@@ -409,19 +538,7 @@ pub const Workspace = struct {
             .ok => |ok| ok.root,
             .err => return try self.alloc.alloc(FileId, 0),
         };
-
-        var out = try std.ArrayList(FileId).initCapacity(self.alloc, 4);
-        errdefer out.deinit(self.alloc);
-
-        var visitor = ImportVisitor{
-            .ws = self,
-            .out = &out,
-            .base = snap.name,
-            .failed = false,
-        };
-        visitor.visit(root);
-        if (visitor.failed) return error.OutOfMemory;
-        return out.toOwnedSlice(self.alloc);
+        return self.collectDepsFromParsed(snap, root);
     }
 
     fn resolveOpenImport(
@@ -535,6 +652,11 @@ pub const Workspace = struct {
             deinitArtifact(self.alloc, entry.value_ptr.artifact);
             self.alloc.free(entry.value_ptr.symbols);
         }
+        var inspect_it = self.inspect_cache.iterator();
+        while (inspect_it.next()) |entry| {
+            self.alloc.free(entry.value_ptr.symbols);
+            self.alloc.free(entry.value_ptr.dependencies);
+        }
     }
 
     fn clearDeps(self: *Workspace) void {
@@ -549,6 +671,29 @@ pub const Workspace = struct {
     fn copyDeps(self: *Workspace, id: FileId) ![]FileId {
         const deps = self.dependencies.get(id) orelse return self.alloc.alloc(FileId, 0);
         return self.alloc.dupe(FileId, deps);
+    }
+
+    fn putInspectCache(
+        self: *Workspace,
+        id: FileId,
+        version: u32,
+        opts: lang.BuildOptions,
+        symbols: []Symbol,
+        dependencies: []FileId,
+    ) !void {
+        const entry = InspectCacheEntry{
+            .version = version,
+            .opts = opts,
+            .symbols = symbols,
+            .dependencies = dependencies,
+        };
+        if (self.inspect_cache.getPtr(id)) |slot| {
+            self.alloc.free(slot.symbols);
+            self.alloc.free(slot.dependencies);
+            slot.* = entry;
+        } else {
+            try self.inspect_cache.put(id, entry);
+        }
     }
 
     fn dependencyClosure(self: *Workspace, alloc: std.mem.Allocator, id: FileId) ![]FileId {
@@ -593,11 +738,28 @@ pub const Workspace = struct {
             .ok => |ok| ok.root,
             .err => return self.alloc.alloc(Symbol, 0),
         };
+        return self.collectSymbolsFromParsed(root);
+    }
 
+    fn collectSymbolsFromParsed(self: *Workspace, root: *lang.Node) ![]Symbol {
         var out = try std.ArrayList(Symbol).initCapacity(self.alloc, 8);
         errdefer out.deinit(self.alloc);
         var visitor = SymbolVisitor{ .alloc = self.alloc, .out = &out };
         visitor.visit(root);
+        return out.toOwnedSlice(self.alloc);
+    }
+
+    fn collectDepsFromParsed(self: *Workspace, snap: Snapshot, root: *lang.Node) ![]FileId {
+        var out = try std.ArrayList(FileId).initCapacity(self.alloc, 4);
+        errdefer out.deinit(self.alloc);
+        var visitor = ImportVisitor{
+            .ws = self,
+            .out = &out,
+            .base = snap.name,
+            .failed = false,
+        };
+        visitor.visit(root);
+        if (visitor.failed) return error.OutOfMemory;
         return out.toOwnedSlice(self.alloc);
     }
 
@@ -655,7 +817,7 @@ pub const Workspace = struct {
         opts: lang.BuildOptions,
         best: *?Location,
     ) !void {
-        var analysis = try self.analyzeDetailed(alloc, id, opts);
+        var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         for (analysis.symbols) |sym| {
             if (!std.mem.eql(u8, sym.name, name)) continue;
@@ -693,6 +855,34 @@ fn copyArtifact(alloc: std.mem.Allocator, artifact: lang.Artifact) !lang.Artifac
 fn deinitArtifact(alloc: std.mem.Allocator, artifact: lang.Artifact) void {
     alloc.free(artifact.instructions);
     alloc.free(artifact.spans);
+}
+
+fn copyError(
+    alloc: std.mem.Allocator,
+    err: lang.Error,
+    source_name: []const u8,
+    source: []const u8,
+) !lang.Error {
+    return switch (err) {
+        .parse => |failure| blk: {
+            var report = try failure.report.copy(alloc);
+            report.source_name = try alloc.dupe(u8, source_name);
+            report.source = try alloc.dupe(u8, source);
+            break :blk .{ .parse = .{ .kind = failure.kind, .report = report } };
+        },
+        .expand => |failure| blk: {
+            var report = try failure.report.copy(alloc);
+            report.source_name = try alloc.dupe(u8, source_name);
+            report.source = try alloc.dupe(u8, source);
+            break :blk .{ .expand = .{ .report = report } };
+        },
+        .lower => |failure| blk: {
+            var report = try failure.report.copy(alloc);
+            report.source_name = try alloc.dupe(u8, source_name);
+            report.source = try alloc.dupe(u8, source);
+            break :blk .{ .lower = .{ .kind = failure.kind, .report = report } };
+        },
+    };
 }
 
 fn copySymbols(alloc: std.mem.Allocator, symbols: []const Symbol) ![]Symbol {
@@ -842,28 +1032,14 @@ test "workspace caches repeated analysis" {
     var vm = try VM.init(.{ .alloc = alloc, .io = std.testing.io });
     defer vm.deinit();
 
-    var ws = try Workspace.init(&vm, alloc);
+    var ws = try Workspace.initWithVm(&vm, alloc);
     defer ws.deinit();
 
     const id = try ws.open("<test>", "1 + 1");
     const first = try ws.analyze(alloc, id, .{});
-    defer switch (first) {
-        .ok => |artifact| {
-            alloc.free(artifact.instructions);
-            alloc.free(artifact.spans);
-        },
-        .err => |err| lang.deinitError(alloc, err),
-    };
     try std.testing.expect(first == .ok);
 
     const second = try ws.analyze(alloc, id, .{});
-    defer switch (second) {
-        .ok => |artifact| {
-            alloc.free(artifact.instructions);
-            alloc.free(artifact.spans);
-        },
-        .err => |err| lang.deinitError(alloc, err),
-    };
     try std.testing.expect(second == .ok);
     try std.testing.expectEqual(first.ok.instructions.len, second.ok.instructions.len);
 }
@@ -876,7 +1052,7 @@ test "workspace invalidates cache on change" {
     var vm = try VM.init(.{ .alloc = alloc, .io = std.testing.io });
     defer vm.deinit();
 
-    var ws = try Workspace.init(&vm, alloc);
+    var ws = try Workspace.initWithVm(&vm, alloc);
     defer ws.deinit();
 
     const id = try ws.open("<test>", "1 + 1");
@@ -912,7 +1088,7 @@ test "workspace invalidates dependent caches" {
     var vm = try VM.init(.{ .alloc = alloc, .io = std.testing.io });
     defer vm.deinit();
 
-    var ws = try Workspace.init(&vm, alloc);
+    var ws = try Workspace.initWithVm(&vm, alloc);
     defer ws.deinit();
 
     const a = try ws.open("dir/a.rv", "1");
@@ -954,7 +1130,7 @@ test "analysis returns snapshot and artifact" {
     var vm = try VM.init(.{ .alloc = alloc, .io = std.testing.io });
     defer vm.deinit();
 
-    var ws = try Workspace.init(&vm, alloc);
+    var ws = try Workspace.initWithVm(&vm, alloc);
     defer ws.deinit();
 
     const id = try ws.open("<test>", "1 + 1");
@@ -971,32 +1147,41 @@ test "workspace query surface" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    var vm = try VM.init(.{ .alloc = alloc, .io = std.testing.io });
-    defer vm.deinit();
-
-    var ws = try Workspace.init(&vm, alloc);
+    var ws = try Workspace.init(alloc);
     defer ws.deinit();
 
     const source =
-        \\ const x = 1
-        \\ x
+        \\const x = 1
+        \\x
     ;
     const id = try ws.open("<test>", source);
+    const query_opts: lang.BuildOptions = .{
+        .include_default_macros = false,
+        .install_debug_info = false,
+        .test_mode = false,
+    };
 
-    const syms = try ws.documentSymbols(alloc, id, .{});
+    const syms = try ws.documentSymbols(alloc, id, query_opts);
     defer alloc.free(syms);
     try std.testing.expect(syms.len != 0);
-    try std.testing.expectEqualStrings("x", syms[0].name);
+    var found_symbol = false;
+    for (syms) |sym| {
+        if (std.mem.eql(u8, sym.name, "x")) {
+            found_symbol = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_symbol);
 
-    const def = try ws.definition(alloc, id, .{ .line = 2, .character = 1 }, .{});
+    const def = try ws.definition(alloc, id, .{ .line = 2, .character = 1 }, query_opts);
     try std.testing.expect(def != null);
     try std.testing.expectEqualStrings("<test>", def.?.name);
 
-    const refs = try ws.references(alloc, id, .{ .line = 2, .character = 1 }, .{});
+    const refs = try ws.references(alloc, id, .{ .line = 2, .character = 1 }, query_opts);
     defer alloc.free(refs);
     try std.testing.expect(refs.len >= 2);
 
-    var hov = try ws.hover(alloc, id, .{ .line = 2, .character = 1 }, .{});
+    var hov = try ws.hover(alloc, id, .{ .line = 2, .character = 1 }, query_opts);
     try std.testing.expect(hov != null);
     defer if (hov) |*h| h.deinit(alloc);
     try std.testing.expect(std.mem.indexOf(u8, hov.?.text, "x at") != null);
@@ -1007,10 +1192,7 @@ test "workspace diagnostics query" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    var vm = try VM.init(.{ .alloc = alloc, .io = std.testing.io });
-    defer vm.deinit();
-
-    var ws = try Workspace.init(&vm, alloc);
+    var ws = try Workspace.init(alloc);
     defer ws.deinit();
 
     const id = try ws.open("<test>", "const x =");

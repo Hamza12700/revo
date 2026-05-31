@@ -1850,7 +1850,6 @@ test "typed binding label names the expected type" {
         .ok => return error.ExpectedCompileFailure,
         .err => |failure| switch (failure) {
             .lower => |lower| {
-                defer lang.deinitError(alloc, failure);
                 const primary = lang.diagnostic.primarySpan(lower.report).?;
                 try std.testing.expectEqualStrings("not int!", primary.message);
                 try std.testing.expectEqualStrings(
@@ -1881,7 +1880,6 @@ test "compiler reports multiple semantic errors in one pass" {
         .ok => return error.ExpectedCompileFailure,
         .err => |failure| switch (failure) {
             .lower => |lower| {
-                defer lang.deinitError(alloc, failure);
                 var error_count: usize = 0;
                 for (lower.report.parts) |part| {
                     if (part == .@"error") error_count += 1;
@@ -1911,7 +1909,6 @@ test "typed call reports multiple bad arguments" {
         .ok => return error.ExpectedCompileFailure,
         .err => |failure| switch (failure) {
             .lower => |lower| {
-                defer lang.deinitError(alloc, failure);
                 var error_count: usize = 0;
                 for (lower.report.parts) |part| {
                     if (part == .@"error") error_count += 1;
@@ -1941,7 +1938,6 @@ test "named call reports multiple bad parameters" {
         .ok => return error.ExpectedCompileFailure,
         .err => |failure| switch (failure) {
             .lower => |lower| {
-                defer lang.deinitError(alloc, failure);
                 var error_count: usize = 0;
                 for (lower.report.parts) |part| {
                     if (part == .@"error") error_count += 1;

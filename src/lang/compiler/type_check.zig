@@ -115,8 +115,8 @@ fn inferCallReturnType(self: *Compiler, call: anytype) TypeInfo {
 fn inferFieldType(self: *Compiler, field: anytype) TypeInfo {
     return switch (inferExprType(self, field.object)) {
         .struct_type => |name| blk: {
-            const layout = self.struct_layouter.getLayout(self.vm, name) orelse break :blk .any;
-            for (layout.fields) |f| {
+            const layout = self.struct_layouts.get(name) orelse break :blk .any;
+            for (layout) |f| {
                 if (std.mem.eql(u8, f.name, field.name)) break :blk f.field_type;
             }
             break :blk .any;
@@ -300,8 +300,8 @@ pub fn validateAssignmentType(self: *Compiler, target: *const Node, value: *cons
         .field => |field| {
             const object_type = inferExprType(self, field.object);
             if (object_type != .struct_type) return;
-            const layout = self.struct_layouter.getLayout(self.vm, object_type.struct_type) orelse return;
-            for (layout.fields) |f| {
+            const layout = self.struct_layouts.get(object_type.struct_type) orelse return;
+            for (layout) |f| {
                 if (std.mem.eql(u8, f.name, field.name)) {
                     const actual = inferExprType(self, value);
                     try checkType(self.alloc, f.field_type, actual, value.span);

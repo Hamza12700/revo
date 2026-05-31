@@ -130,6 +130,7 @@ pub const Compiler = struct {
     active_registers: usize = 0,
     max_registers: usize = 0,
     struct_layouter: struct_layout.StructLayouter,
+    struct_layouts: std.StringHashMap([]const struct_layout.FieldDef),
     ir_ctx: ?ir.IrContext = null,
     use_ir_first: bool = false,
     upvalue_cache: std.AutoHashMap(usize, usize) = undefined,
@@ -157,6 +158,7 @@ pub const Compiler = struct {
             .loop_result_regs = try std.ArrayList(usize).initCapacity(arena, 8),
             .test_suite_names = try std.ArrayList([]const u8).initCapacity(arena, 4),
             .struct_layouter = struct_layout.StructLayouter.init(arena),
+            .struct_layouts = std.StringHashMap([]const struct_layout.FieldDef).init(arena),
             .ir_ctx = try ir.IrContext.init(arena),
             .upvalue_cache = std.AutoHashMap(usize, usize).init(arena),
             .type_aliases = std.StringHashMap(types.TypeInfo).init(arena),
@@ -175,6 +177,9 @@ pub const Compiler = struct {
         self.loop_result_regs.deinit(self.alloc);
         self.test_suite_names.deinit(self.alloc);
         self.struct_layouter.deinit();
+        var layout_it = self.struct_layouts.iterator();
+        while (layout_it.next()) |entry| self.alloc.free(entry.value_ptr.*);
+        self.struct_layouts.deinit();
         if (self.ir_ctx) |*ctx| ctx.deinit();
         self.arena.deinit();
     }

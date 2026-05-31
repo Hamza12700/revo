@@ -70,6 +70,29 @@ pub const Report = struct {
     source_name: ?[]const u8 = null,
     source: ?[]const u8 = null,
 
+    pub fn deinit(self: *Report, alloc: std.mem.Allocator) void {
+        alloc.free(self.message);
+        if (self.source_name) |source_name| alloc.free(source_name);
+        if (self.source) |source| alloc.free(source);
+        for (self.parts) |part| switch (part) {
+            .@"error" => |err| alloc.free(err),
+            .tip => |tip| alloc.free(tip),
+            .warn => |warn| alloc.free(warn),
+            .note => |note| alloc.free(note),
+            .span => |span| {
+                if (span.message.len != 0) alloc.free(span.message);
+                if (span.source_name) |source_name| alloc.free(source_name);
+                if (span.source) |source| alloc.free(source);
+            },
+            .trace => |trace| {
+                alloc.free(trace.function_name);
+                if (trace.source_name) |source_name| alloc.free(source_name);
+                if (trace.source) |source| alloc.free(source);
+            },
+        };
+        alloc.free(self.parts);
+    }
+
     /// deep copy borrowed text into `alloc`
     pub fn copy(
         report: Report,
