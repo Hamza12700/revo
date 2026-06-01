@@ -95,6 +95,12 @@ pub const Hover = struct {
     }
 };
 
+pub const IndexedSymbol = struct {
+    file_id: FileId,
+    range: Range,
+    kind: SymbolKind,
+};
+
 pub const Workspace = struct {
     alloc: std.mem.Allocator,
     vm: ?*VM,
@@ -105,6 +111,8 @@ pub const Workspace = struct {
     reverse_deps: std.AutoHashMap(FileId, []FileId),
     cache: std.AutoHashMap(FileId, CacheEntry),
     inspect_cache: std.AutoHashMap(FileId, InspectCacheEntry),
+    symbol_index: std.StringHashMap([]IndexedSymbol),
+    symbol_index_dirty: bool = true,
     next_file_id: FileId = 1,
 
     pub fn init(alloc: std.mem.Allocator) !Workspace {
@@ -118,6 +126,7 @@ pub const Workspace = struct {
             .reverse_deps = std.AutoHashMap(FileId, []FileId).init(alloc),
             .cache = std.AutoHashMap(FileId, CacheEntry).init(alloc),
             .inspect_cache = std.AutoHashMap(FileId, InspectCacheEntry).init(alloc),
+            .symbol_index = std.StringHashMap([]IndexedSymbol).init(alloc),
         };
     }
 
@@ -142,6 +151,11 @@ pub const Workspace = struct {
         self.reverse_deps.deinit();
         self.cache.deinit();
         self.inspect_cache.deinit();
+        {
+            var it = self.symbol_index.iterator();
+            while (it.next()) |entry| self.alloc.free(entry.value_ptr.*);
+        }
+        self.symbol_index.deinit();
     }
 
     pub fn open(self: *Workspace, name: []const u8, text: []const u8) !FileId {
@@ -181,6 +195,7 @@ pub const Workspace = struct {
         try self.file_names.put(name_copy, id);
         errdefer _ = self.file_names.remove(name_copy);
 
+        self.symbol_index_dirty = true;
         return id;
     }
 
@@ -192,6 +207,7 @@ pub const Workspace = struct {
         entry.text = text_copy;
         entry.version += 1;
         self.invalidateCache(id);
+        self.symbol_index_dirty = true;
     }
 
     pub fn close(self: *Workspace, id: FileId) void {
@@ -210,6 +226,7 @@ pub const Workspace = struct {
             const moved = self.files.items[index];
             self.file_index.put(moved.id, index) catch {};
         }
+        self.symbol_index_dirty = true;
     }
 
     pub fn snapshot(self: *Workspace, id: FileId) ?Snapshot {
@@ -229,6 +246,65 @@ pub const Workspace = struct {
 
     pub fn isStale(self: *Workspace, id: FileId, version: u32) bool {
         return !(self.currentVersion(id) == version);
+    }
+
+    fn rebuildSymbolIndex(self: *Workspace) void {
+        {
+            var it = self.symbol_index.iterator();
+            while (it.next()) |entry| self.alloc.free(entry.value_ptr.*);
+        }
+        self.symbol_index.clearRetainingCapacity();
+
+        for (self.files.items) |file| {
+            const cached = self.inspect_cache.get(file.id) orelse continue;
+            for (cached.symbols) |sym| {
+                const name_copy = self.alloc.dupe(u8, sym.name) catch continue;
+                const entry = IndexedSymbol{
+                    .file_id = file.id,
+                    .range = sym.range,
+                    .kind = sym.kind,
+                };
+                if (self.symbol_index.getPtr(name_copy)) |list| {
+                    const new_len = list.len + 1;
+                    const new_list = self.alloc.realloc(list.*, new_len) catch {
+                        self.alloc.free(name_copy);
+                        continue;
+                    };
+                    new_list[new_len - 1] = entry;
+                    list.* = new_list;
+                } else {
+                    const new_list = self.alloc.alloc(IndexedSymbol, 1) catch {
+                        self.alloc.free(name_copy);
+                        continue;
+                    };
+                    new_list[0] = entry;
+                    self.symbol_index.put(name_copy, new_list) catch {
+                        self.alloc.free(new_list);
+                        self.alloc.free(name_copy);
+                        continue;
+                    };
+                }
+            }
+        }
+        self.symbol_index_dirty = false;
+    }
+
+    pub fn findSymbols(self: *Workspace, alloc: std.mem.Allocator, name: []const u8) ![]Location {
+        if (self.symbol_index_dirty) self.rebuildSymbolIndex();
+        const syms = self.symbol_index.get(name) orelse return alloc.alloc(Location, 0);
+        const locations = try alloc.alloc(Location, syms.len);
+        for (syms, locations) |sym, *loc| {
+            const snap = self.snapshot(sym.file_id) orelse {
+                alloc.free(locations);
+                return error.FileNotOpen;
+            };
+            loc.* = .{
+                .file_id = sym.file_id,
+                .name = try alloc.dupe(u8, snap.name),
+                .range = sym.range,
+            };
+        }
+        return locations;
     }
 
     pub fn analyze(
@@ -993,21 +1069,27 @@ fn isWordChar(c: u8) bool {
 const SymbolVisitor = struct {
     alloc: std.mem.Allocator,
     out: *std.ArrayList(Symbol),
+    in_decl: bool = false,
 
     pub fn visit(self: *@This(), node: *const lang.Node) void {
         switch (node.expr) {
-            .decl => |d| switch (d.inner.expr) {
-                .binding => |b| self.addBinding(b),
-                .struct_def => |def| self.addName(def.name, .struct_type, node.span),
-                .type_alias => |t| self.addName(t.name, .type_alias, node.span),
-                else => {},
+            .decl => |d| {
+                self.in_decl = true;
+                defer self.in_decl = false;
+                switch (d.inner.expr) {
+                    .binding => |b| self.addBinding(b),
+                    .struct_def => |def| self.addName(def.name, .struct_type, node.span),
+                    .type_alias => |t| self.addName(t.name, .type_alias, node.span),
+                    else => {},
+                }
+                // walkAST would re-visit d.inner — it's already handled above
             },
-            .binding => |b| self.addBinding(b),
-            .struct_def => |def| self.addName(def.name, .struct_type, node.span),
-            .type_alias => |t| self.addName(t.name, .type_alias, node.span),
+            .binding => |b| if (!self.in_decl) self.addBinding(b),
+            .struct_def => |def| if (!self.in_decl) self.addName(def.name, .struct_type, node.span),
+            .type_alias => |t| if (!self.in_decl) self.addName(t.name, .type_alias, node.span),
             else => {},
         }
-        lang.ast.walkAST(SymbolVisitor, self, node);
+        if (node.expr != .decl) lang.ast.walkAST(SymbolVisitor, self, node);
     }
 
     fn addBinding(self: *@This(), b: lang.ast.Binding) void {
@@ -1257,4 +1339,46 @@ test "workspace stale version tracking" {
     const v2 = ws.currentVersion(id).?;
     try std.testing.expectEqual(@as(u32, 2), v2);
     try std.testing.expect(!ws.isStale(id, v2));
+}
+
+test "workspace cross-file symbol index" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var ws = try Workspace.init(alloc);
+    defer ws.deinit();
+
+    // *opens two files with overlapping symbol names*
+    const a = try ws.open("<a>", "const x = 1\nconst y = 2");
+    const b = try ws.open("<b>", "const x = 3\nconst z = 4");
+
+    // *populates inspect caches*
+    _ = try ws.inspectDetailed(alloc, a, .{});
+    _ = try ws.inspectDetailed(alloc, b, .{});
+
+    // findSymbols works across files
+    const xs = try ws.findSymbols(alloc, "x");
+    defer alloc.free(xs);
+    try std.testing.expectEqual(@as(usize, 2), xs.len);
+
+    const ys = try ws.findSymbols(alloc, "y");
+    defer alloc.free(ys);
+    try std.testing.expectEqual(@as(usize, 1), ys.len);
+
+    const zs = try ws.findSymbols(alloc, "z");
+    defer alloc.free(zs);
+    try std.testing.expectEqual(@as(usize, 1), zs.len);
+
+    // unknown name returns empty
+    const ws2 = try ws.findSymbols(alloc, "nobody");
+    defer alloc.free(ws2);
+    try std.testing.expectEqual(@as(usize, 0), ws2.len);
+
+    // after change, index is rebuilt
+    try ws.change(a, "const x = 10");
+    _ = try ws.inspectDetailed(alloc, a, .{});
+    const xs2 = try ws.findSymbols(alloc, "x");
+    defer alloc.free(xs2);
+    try std.testing.expectEqual(@as(usize, 2), xs2.len);
 }
