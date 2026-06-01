@@ -1,6 +1,10 @@
 # contributing
 
-contributing is anything from a pull request to an issue or a suggestion, all contributions are welcome!
+thank you for considering contributing to revo
+
+the project is so young, that even taking a stroll through any source file might yield you a good observation
+
+a contribution anything from a pull request to an issue or a suggestion, all contributions are welcome!
 
 ## where to start
 
@@ -24,8 +28,14 @@ git push origin <issue_number>-<issue_description>
 
 ## about AI-generated code
 
-please do not submit LLM-authored code if you do not understand it, can't explain it or have not tested it.
-describe the request in your own words, rather than pulling in a wall of AI-generated text.
-this greatly reduces maintenance burden.
+please do not submit LLM-authored code if you do not understand it, can't explain it or have not tested it
+do not submit english AI-generated or translated text at all. this goes for issues as well
+if you don't know the language - that's fine, just submit it in your native language and i'll translate it manually
+do not submit walls of AI-generated code and instead describe it in your own words
+this greatly reduces maintenance burden
 
-thank you for considering contributing to revo!
+if you submit an AI-assisted or AI-generated pull request, clearly mark it as such
+
+do not advertise in git history - that is, do not leave a model/vendor name in the details
+
+if you make a functional change, the correctness should also be verified by a test

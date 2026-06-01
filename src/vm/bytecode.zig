@@ -22,6 +22,7 @@ pub const MAGIC = [4]u8{ 'R', 'E', 'V', 'O' };
 pub const VERSION_MAJOR: u16 = 0;
 pub const VERSION_MINOR: u16 = 1;
 
+/// on-disk
 pub const Header = extern struct {
     magic: [4]u8,
     version_major: u16,
@@ -33,6 +34,7 @@ pub const Header = extern struct {
     prototypes_count: u32,
 };
 
+/// unblobbified
 pub const DeserializedBytecode = struct {
     instructions: []Instruction,
     spans: []Span,
@@ -45,6 +47,10 @@ pub const DeserializedBytecode = struct {
 };
 
 const VM = @import("VM.zig").VM;
+
+//
+// ser helpers
+//
 
 fn writeIntLE(buffer: *std.ArrayList(u8), allocator: Allocator, comptime IntType: type, value: IntType) !void {
     var bytes: [@sizeOf(IntType)]u8 = undefined;
@@ -80,6 +86,11 @@ fn serializeTuple(buffer: *std.ArrayList(u8), allocator: Allocator, vm: *VM, tid
     }
 }
 
+//
+// serialization
+//
+
+/// write a compiled artifact + vm constants/prototypes into a byte array
 pub fn serialize(vm: *VM, artifact: Artifact, allocator: Allocator) ![]u8 {
     var buffer = try std.ArrayList(u8).initCapacity(allocator, 256);
     defer buffer.deinit(allocator);
@@ -95,6 +106,7 @@ pub fn serialize(vm: *VM, artifact: Artifact, allocator: Allocator) ![]u8 {
         .prototypes_count = @intCast(vm.functions.prototypes.items.len),
     };
 
+    // header fields
     try buffer.appendSlice(allocator, &header.magic);
     try writeIntLE(&buffer, allocator, u16, header.version_major);
     try writeIntLE(&buffer, allocator, u16, header.version_minor);
@@ -168,6 +180,11 @@ pub fn serialize(vm: *VM, artifact: Artifact, allocator: Allocator) ![]u8 {
     return buffer.toOwnedSlice(allocator);
 }
 
+//
+// deserialization
+//
+
+/// read a tuple value from the byte stream
 fn deserializeTuple(vm: *VM, reader: *std.Io.Reader, allocator: Allocator) !memory.Data {
     const items_len = std.mem.littleToNative(u32, std.mem.readInt(u32, try reader.takeArray(4), .little));
     const items = try allocator.alloc(memory.Data, items_len);
@@ -212,6 +229,7 @@ fn deserializeTuple(vm: *VM, reader: *std.Io.Reader, allocator: Allocator) !memo
     return memory.Data.new.tuple(tid);
 }
 
+// load bytecode from a binary blob, populating vm constants and prototypes
 pub fn deserialize(vm: *VM, data: []const u8, allocator: Allocator) !DeserializedBytecode {
     var reader: std.Io.Reader = .fixed(data);
 
@@ -337,6 +355,10 @@ pub fn deserialize(vm: *VM, data: []const u8, allocator: Allocator) !Deserialize
         .allocator = allocator,
     };
 }
+
+//
+// tests
+//
 
 const test_support = @import("testing.zig");
 const expectEqual = std.testing.expectEqual;

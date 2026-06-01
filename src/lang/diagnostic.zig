@@ -530,9 +530,7 @@ fn renderSpanBlock(
         }
 
         // this is the actual code row in the box
-        // const source_bracket = if (is_first and is_last) "    " else if (is_first) " ╭─ " else if (is_last) " ╰─ " else " |  ";
         try writeLineNumber(writer, cl.num, line_width);
-        // try writer.writeAll(" |");
         // try writer.writeAll(source_bracket);
         try writer.writeAll(cl.text);
         try writer.writeByte('\n');

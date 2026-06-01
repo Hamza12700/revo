@@ -2,7 +2,6 @@ const std = @import("std");
 const lang = @import("./root.zig");
 
 const ast = lang.ast;
-const Expr = ast.Expr;
 const Node = ast.Node;
 const Span = ast.Span;
 const pipeline = lang.pipeline;

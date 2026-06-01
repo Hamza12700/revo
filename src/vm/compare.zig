@@ -4,7 +4,6 @@
 /// - when same type: numbers/strings/tuples compare by value; atoms/functions/tables by id
 /// note: NaNs are canonicalized so fast bitwise equality may treat NaN as equal
 const std = @import("std");
-const revo = @import("revo");
 const Data = @import("memory.zig").Data;
 const BOX_MASK = @import("memory.zig").BOX_MASK;
 const VM = @import("VM.zig");

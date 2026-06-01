@@ -1,6 +1,10 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 
+//
+// lexer
+//
+
 pub const LexError = struct {
     kind: Kind,
     span: ast.Span,
@@ -138,6 +142,7 @@ pub const Token = struct {
     start: usize,
     end: usize,
 
+    // mainly for diagnostic use
     pub fn span(self: Token) ast.Span {
         return .{
             .start = self.start,
@@ -192,6 +197,7 @@ pub const testing = struct {
     }
 };
 
+// tokenize source into a flat array (errors kill to death)
 pub fn lex(allocator: std.mem.Allocator, source: []const u8) ![]Token {
     var lexer = Lexer.init(source, allocator);
     var tokens = try std.ArrayList(Token).initCapacity(allocator, 32);
@@ -206,6 +212,7 @@ pub fn lex(allocator: std.mem.Allocator, source: []const u8) ![]Token {
     return tokens.toOwnedSlice(allocator);
 }
 
+// tokenize with error recovery (returns LexResult intsead of crashing)
 pub fn lexReport(allocator: std.mem.Allocator, source: []const u8) !LexResult {
     var lexer = Lexer.init(source, allocator);
     var tokens = try std.ArrayList(Token).initCapacity(allocator, 32);
@@ -226,14 +233,15 @@ pub fn lexReport(allocator: std.mem.Allocator, source: []const u8) !LexResult {
     return .{ .ok = try tokens.toOwnedSlice(allocator) };
 }
 
+// character-at-a-time, no backtracking
 const Lexer = struct {
     source: []const u8,
     alloc: std.mem.Allocator,
-    pos: usize = 0,
+    pos: usize = 0, // byte offset in source
     line: u32 = 1,
     column: u32 = 1,
-    line_start: bool = true,
-    pending_error_span: ?ast.Span = null,
+    line_start: bool = true, // at start of line (for indent-sensitive tokens)
+    pending_error_span: ?ast.Span = null, // saved for error recovery
 
     fn init(source: []const u8, alloc: std.mem.Allocator) Lexer {
         return .{ .source = source, .alloc = alloc };

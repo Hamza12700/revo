@@ -369,32 +369,6 @@ fn tableAdd(args: []const Data, vm: *VM) !NativeResult {
     return .okData(Data.new.table(new_id));
 }
 
-/// > table:tostring() -> string
-/// converts table to display string
-fn tostring(args: []const Data, vm: *VM) !NativeResult {
-    const table_id = args[0].asTable() orelse return .errType(0, "table", dataToString(args[0]));
-    const tbl = try vm.tables.get(table_id);
-    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
-    defer buf.deinit();
-    try tbl.write(&buf.writer, vm, .display);
-    const slice = try buf.toOwnedSlice();
-    const result = try vm.adoptDataString(slice);
-    return .okData(result);
-}
-
-/// > table:__debug() -> string
-/// converts table to debug string
-fn debug(args: []const Data, vm: *VM) !NativeResult {
-    const table_id = args[0].asTable() orelse return .errType(0, "table", dataToString(args[0]));
-    const tbl = try vm.tables.get(table_id);
-    var buf = std.Io.Writer.Allocating.init(vm.runtime.alloc);
-    defer buf.deinit();
-    try tbl.write(&buf.writer, vm, .debug);
-    const slice = try buf.toOwnedSlice();
-    const result = try vm.adoptDataString(slice);
-    return .okData(result);
-}
-
 /// > table:sort() -> table
 /// sorts table array part in ascending order (numbers < strings)
 fn sort(args: []const Data, vm: *VM) !NativeResult {

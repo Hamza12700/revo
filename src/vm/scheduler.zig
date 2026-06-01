@@ -7,13 +7,19 @@ const Fiber = VM.Fiber;
 const FiberID = VM.FiberID;
 const ChannelID = VM.ChannelID;
 
+//
+// scheduler
+//
+
 pub const Scheduler = @This();
 
+/// fiber waiting on channel, send or recv
 pub const ChannelWaiter = struct {
     fiber_id: FiberID,
     value: ?Data = null,
 };
 
+/// buffered or unbuffered
 pub const ChannelState = struct {
     cap: usize = 0,
     queue: std.ArrayList(Data),
@@ -71,6 +77,7 @@ pub const ChannelState = struct {
     }
 };
 
+/// compact runq when head is past midpoint
 fn maybeCompactList(comptime T: type, list: *std.ArrayList(T), head: *usize) void {
     if (head.* == 0) return;
     if (head.* < list.items.len / 2) return;
@@ -80,6 +87,7 @@ fn maybeCompactList(comptime T: type, list: *std.ArrayList(T), head: *usize) voi
     head.* = 0;
 }
 
+/// a fiber waiting on a timer
 pub const SleepWaiter = struct {
     fiber_id: FiberID,
     wake_at_ns: u64,
@@ -92,13 +100,15 @@ pub const IoDispatchResult = struct {
 
 pub const IoReadyFn = *const fn (vm: *VM, waiter: *WaitEntry, revents: i16) anyerror!IoDispatchResult;
 pub const IoDeinitFn = *const fn (alloc: std.mem.Allocator, token: usize) void;
-/// maybe this shouldn't be here
+
+/// read, write, or both
 pub const IoIntent = enum(u8) {
     read = 1,
     write = 2,
     read_write = 3,
 };
 
+/// a fiber waiting on an io event with completion callback
 pub const WaitEntry = struct {
     fiber_id: FiberID,
     wait_id: u64,
@@ -108,24 +118,27 @@ pub const WaitEntry = struct {
     on_deinit: ?IoDeinitFn = null,
 };
 
-fn parkFiber(self: *@This(), fid: FiberID, wait: Fiber.WaitKind, result_slot: ?usize) void {
+/// mark a fiber as waiting and store its wait info
+inline fn parkFiber(self: *@This(), fid: FiberID, wait: Fiber.WaitKind, result_slot: ?usize) void {
     if (fid >= self.fibers.items.len) return;
     const fiber = &self.fibers.items[fid];
     self.setFiberState(fid, .waiting);
-    fiber.running = false;
+    fiber.running = false; // yield execution
     fiber.wait = wait;
     fiber.parked_result_slot = result_slot;
 }
 
-pub fn parkCurrent(self: *@This(), wait: Fiber.WaitKind) void {
+/// park the currently running fiber
+pub inline fn parkCurrent(self: *@This(), wait: Fiber.WaitKind) void {
     self.parkFiber(self.current_fiber, wait, null);
 }
 
+/// park current fiber and fill a specific result slot when woken
 pub fn parkCurrentWithResult(self: *@This(), wait: Fiber.WaitKind, result_slot: usize) void {
     self.parkFiber(self.current_fiber, wait, result_slot);
 }
 
-// park current fiber waiting for io with generic token/callback
+/// park current fiber waiting for io with generic token/callback
 pub fn parkCurrentForIo(
     self: *@This(),
     wait_id: u64,
@@ -145,7 +158,7 @@ pub fn parkCurrentForIo(
     self.parkCurrent(.{ .io = .{ .wait_id = wait_id } });
 }
 
-// wake fiber with optional result, if a result slot exists you fill it
+/// wake a waiting fiber, passing optional result into its slot or stack
 pub fn wakeFiber(self: *@This(), fid: FiberID, result: ?Data) !void {
     if (fid >= self.fibers.items.len) return;
     var fiber = &self.fibers.items[fid];
@@ -167,7 +180,7 @@ pub fn wakeFiber(self: *@This(), fid: FiberID, result: ?Data) !void {
 current_fiber: FiberID,
 alloc: std.mem.Allocator,
 fibers: std.ArrayList(Fiber),
-ring_buf: []FiberID,
+ring_buf: []FiberID, // runq
 ring_head: usize,
 ring_tail: usize,
 ring_mask: usize,
@@ -176,6 +189,7 @@ io_waiters: std.ArrayList(WaitEntry),
 channels: std.AutoHashMap(ChannelID, ChannelState),
 waiting_cnt: usize,
 
+/// init with a 64-slot runq
 pub fn init(alloc: std.mem.Allocator) !@This() {
     const ring_cap = 64;
     return .{
@@ -198,33 +212,35 @@ pub fn deinit(self: *@This()) void {
     self.fibers.deinit(self.alloc);
     self.alloc.free(self.ring_buf);
     self.sleepers.deinit(self.alloc);
-    for (self.io_waiters.items) |waiter|
-        if (waiter.on_deinit) |deinit_fn| deinit_fn(self.alloc, waiter.token);
-
     self.io_waiters.deinit(self.alloc);
     var channel_it = self.channels.valueIterator();
     while (channel_it.next()) |channel| channel.deinit(self.alloc);
     self.channels.deinit();
 }
 
+/// get the currently executing fiber
 pub inline fn currentFiber(self: *@This()) *Fiber {
     return &self.fibers.items[self.current_fiber];
 }
 
+/// get the root (main) fiber
 pub inline fn mainFiber(self: *@This()) *Fiber {
     return &self.fibers.items[0];
 }
 
+/// update fiber state n track waiting count
 pub inline fn setFiberState(self: *@This(), fid: FiberID, new_state: Fiber.State) void {
     if (fid >= self.fibers.items.len) return;
     const fiber = &self.fibers.items[fid];
     const old_state = fiber.state;
     if (old_state == new_state) return;
+    // adjust waiting cnt on transition
     if (old_state == .waiting and self.waiting_cnt > 0) self.waiting_cnt -= 1;
     if (new_state == .waiting) self.waiting_cnt += 1;
     fiber.state = new_state;
 }
 
+/// add a fiber to the runq; grows if full
 pub inline fn enqueueRunnable(self: *@This(), fid: FiberID) !void {
     if (fid >= self.fibers.items.len) return;
     const fiber = &self.fibers.items[fid];
@@ -257,6 +273,7 @@ pub inline fn enqueueRunnable(self: *@This(), fid: FiberID) !void {
     fiber.in_runq = true;
 }
 
+/// pop the next runnable fiber from runq
 pub inline fn dequeueRunnable(self: *@This()) ?FiberID {
     if (self.ring_head == self.ring_tail) return null;
     const fid = self.ring_buf[self.ring_head];
@@ -265,6 +282,7 @@ pub inline fn dequeueRunnable(self: *@This()) ?FiberID {
     return fid;
 }
 
+/// mark a fiber as dead and wake all its waiters
 pub fn finishFiber(self: *@This(), fid: FiberID, result: Data) !void {
     var fiber = &self.fibers.items[fid];
     fiber.result = result;
@@ -276,12 +294,14 @@ pub fn finishFiber(self: *@This(), fid: FiberID, result: Data) !void {
     fiber.waiters.items.len = 0;
 }
 
+/// park current fiber for a duration in ms
 pub fn parkCurrentForSleepMS(self: *@This(), ms: u64, now_ns: u64) !void {
     const wake_at = now_ns + (ms * std.time.ns_per_ms);
     try self.sleepers.append(self.alloc, .{ .fiber_id = self.current_fiber, .wake_at_ns = wake_at });
     self.parkCurrent(.sleep);
 }
 
+/// wake any fibers whose sleep timer has expired
 pub fn wakeDueSleepers(self: *@This(), now_ns: u64) !void {
     var i: usize = 0;
     while (i < self.sleepers.items.len) {
@@ -295,6 +315,7 @@ pub fn wakeDueSleepers(self: *@This(), now_ns: u64) !void {
     }
 }
 
+// ns until the next sleeper wakes (null if none)
 pub fn nextSleepDelayNs(self: *@This(), now_ns: u64) ?u64 {
     if (self.sleepers.items.len == 0) return null;
     var min_wake = self.sleepers.items[0].wake_at_ns;

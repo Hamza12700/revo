@@ -1,6 +1,7 @@
 # types
 
-the compiler infers them, tracks them, and uses them to pick fast paths. if it can’t figure one out, it falls back to `any` and keeps moving
+the compiler infers them, tracks them, and uses them to pick fast paths
+they will fall back to `any` when they can't be inferred
 
 ```ruby
 let factor: int = 2

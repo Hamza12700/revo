@@ -2,7 +2,6 @@ const std = @import("std");
 
 const revo = @import("revo");
 const diagnostic = revo.lang.diagnostic;
-const Span = revo.lang.ast.Span;
 pub const TraceFrame = diagnostic.TraceFrame;
 
 pub const NativeError = error{

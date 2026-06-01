@@ -205,6 +205,31 @@ pub fn build(b: *std.Build) void {
     // test_erevo_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = erevo_mod, .filters = test_filters })).step);
     // test_step.dependOn(test_erevo_step);
 
+    //
+    // lsp
+    //
+    if (b.lazyDependency("lsp_kit", .{})) |lsp_kit_dep| {
+        const lsp_mod = lsp_kit_dep.module("lsp");
+
+        const revolt_root = b.createModule(.{
+            .root_source_file = b.path("src/lsp/server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        revolt_root.addImport("lsp", lsp_mod);
+        for (imports) |imp| revolt_root.addImport(imp[0], imp[1]);
+
+        const revolt = b.addExecutable(.{ .name = "revolt", .root_module = revolt_root });
+        const install_revolt = b.addInstallArtifact(revolt, .{});
+        b.getInstallStep().dependOn(&install_revolt.step);
+
+        const revolt_step = b.step("lsp", "build the lsp");
+        revolt_step.dependOn(&install_revolt.step);
+
+        check_step.dependOn(&revolt.step);
+    }
+
     const write_files = b.addWriteFiles();
     const bindings = @import("src/bindings.zig");
     const header_data = bindings.data(b.allocator) catch |err| {

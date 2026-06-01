@@ -8,7 +8,6 @@ const Compiler = revo.lang.compiler.Compiler;
 const ast = @import("../ast.zig");
 const Node = ast.Node;
 const TableEntry = ast.TableEntry;
-const Binding = ast.Binding;
 const StructItem = ast.StructItem;
 const emit = @import("emit.zig");
 const flow = @import("flow.zig");
@@ -565,16 +564,6 @@ pub fn compileTable(self: *Compiler, entries: []const ast.TableEntry) !void {
         try emit.emit(self, .table_set, 0);
         try emit.regRelease(self);
     }
-}
-
-fn typeInfoFromName(
-    type_name: []const u8,
-) @import("types.zig").TypeInfo {
-    if (std.mem.eql(u8, type_name, "int")) return types_mod.TypeInfo.int;
-    if (std.mem.eql(u8, type_name, "float")) return types_mod.TypeInfo.float;
-    if (std.mem.eql(u8, type_name, "string")) return types_mod.TypeInfo.string;
-    if (std.mem.eql(u8, type_name, "bool")) return types_mod.TypeInfo.bool;
-    return types_mod.TypeInfo.any;
 }
 
 fn evalConstNode(self: *Compiler, node: *const Node) ?Data {

@@ -6,13 +6,17 @@ const diagnostic = @import("diagnostic.zig");
 const struct_layout = @import("compiler/struct_layout.zig");
 const types_mod = @import("compiler/types.zig");
 
+/// run semantic analysis; known_globals are names that exist at runtime (builtins)
+/// type_map, if set, is populated with name -> type_name during analysis
 pub fn analyze(
     alloc: std.mem.Allocator,
     root: *const ast.Node,
     source_name: []const u8,
     source: []const u8,
+    known_globals: []const []const u8,
+    type_map: ?*std.StringHashMap([]const u8),
 ) !?lang.Error {
-    var checker = try SemanticChecker.init(alloc, source_name, source);
+    var checker = try SemanticChecker.init(alloc, source_name, source, known_globals, type_map);
     defer checker.deinit();
 
     _ = try checker.visit(root);
@@ -51,8 +55,9 @@ const SemanticChecker = struct {
     struct_layouts: std.StringHashMap([]const struct_layout.FieldDef),
     fn_sigs: std.ArrayList(*FnSig),
     return_types: std.ArrayList(types_mod.TypeInfo),
+    type_map: ?*std.StringHashMap([]const u8),
 
-    fn init(alloc: std.mem.Allocator, source_name: []const u8, source: []const u8) !SemanticChecker {
+    fn init(alloc: std.mem.Allocator, source_name: []const u8, source: []const u8, known_globals: []const []const u8, type_map: ?*std.StringHashMap([]const u8)) !SemanticChecker {
         var checker: SemanticChecker = .{
             .alloc = alloc,
             .source_name = source_name,
@@ -63,8 +68,13 @@ const SemanticChecker = struct {
             .struct_layouts = std.StringHashMap([]const struct_layout.FieldDef).init(alloc),
             .fn_sigs = try std.ArrayList(*FnSig).initCapacity(alloc, 4),
             .return_types = try std.ArrayList(types_mod.TypeInfo).initCapacity(alloc, 4),
+            .type_map = type_map,
         };
         try checker.pushScope();
+        // register built-in names so they don't get flagged as undefined
+        for (known_globals) |name| {
+            try checker.declare(name, .any);
+        }
         return checker;
     }
 
@@ -106,6 +116,15 @@ const SemanticChecker = struct {
     fn declare(self: *SemanticChecker, name: []const u8, t: types_mod.TypeInfo) !void {
         if (self.scopes.items.len == 0) try self.pushScope();
         try self.scopes.items[self.scopes.items.len - 1].values.put(name, t);
+        if (self.type_map) |tm| {
+            if (!tm.contains(name)) {
+                const ts = types_mod.typeName(t);
+                try tm.put(
+                    try self.alloc.dupe(u8, name),
+                    try self.alloc.dupe(u8, ts),
+                );
+            }
+        }
     }
 
     fn lookup(self: *SemanticChecker, name: []const u8) ?types_mod.TypeInfo {
@@ -237,8 +256,17 @@ const SemanticChecker = struct {
             .return_expr => |val| try self.analyzeReturn(val, node.span),
             .call => |call| try self.analyzeCall(call, node.span),
             .if_expr => |v| try self.analyzeIf(v, node.span),
+            .ident => |name| try self.analyzeIdent(name, node.span),
             else => self.inferExprType(node),
         };
+    }
+
+    fn analyzeIdent(self: *SemanticChecker, name: []const u8, span: ast.Span) !types_mod.TypeInfo {
+        if (self.lookup(name) == null and !ast.isDiscardName(name)) {
+            const msg = try std.fmt.allocPrint(self.alloc, "name `{s}` is not defined", .{name});
+            try self.appendError(msg, span, "unknown name");
+        }
+        return self.inferIdentType(name);
     }
 
     fn visit(self: *SemanticChecker, node: *const ast.Node) !types_mod.TypeInfo {
@@ -412,13 +440,15 @@ const SemanticChecker = struct {
             const sig = callee_type.function.*;
             if (call.args.len != sig.params.len) {
                 try self.appendError(
-                    try std.fmt.allocPrint(self.alloc, "call to `{s}` expects {d} argument(s), got {d}", .{
+                    try std.fmt.allocPrint(self.alloc, "`{s}` wants {d} arguments, got {d}", .{
                         call.callee.expr.ident,
                         sig.params.len,
                         call.args.len,
                     }),
                     call.callee.span,
-                    "wrong arity",
+                    try std.fmt.allocPrint(self.alloc, "{d} extra args", .{
+                        call.args.len -| sig.params.len,
+                    }),
                 );
             }
             const count = @min(call.args.len, sig.params.len);
@@ -432,7 +462,14 @@ const SemanticChecker = struct {
                         types_mod.typeName(expected),
                         types_mod.typeName(actual),
                     });
-                    try self.appendError(msg, call.args[i].span, "bad call arg");
+                    try self.appendError(
+                        msg,
+                        call.args[i].span,
+                        try std.fmt.allocPrint(self.alloc, "not {s} (got {s})", .{
+                            types_mod.typeName(expected),
+                            types_mod.typeName(actual),
+                        }),
+                    );
                 }
             }
             return sig.return_type;
@@ -455,7 +492,10 @@ const SemanticChecker = struct {
                         types_mod.typeName(else_type),
                     }),
                     v.then_expr.span,
-                    "branch mismatch",
+                    try std.fmt.allocPrint(self.alloc, "branch mismatch: {s} vs {s}", .{
+                        types_mod.typeName(then_type),
+                        types_mod.typeName(else_type),
+                    }),
                 );
             }
             return if (then_type == .any) else_type else then_type;
@@ -477,7 +517,7 @@ const SemanticChecker = struct {
             expected_name,
             types_mod.typeName(actual),
         });
-        const label = try std.fmt.allocPrint(self.alloc, "{s} {s}!", .{ label_prefix, expected_name });
+        const label = try std.fmt.allocPrint(self.alloc, "wants {s}, got {s}", .{ label_prefix, expected_name });
         try self.appendError(msg, span, label);
         _ = expected;
     }
@@ -489,7 +529,12 @@ const SemanticChecker = struct {
             types_mod.typeName(expected),
             types_mod.typeName(actual),
         });
-        try self.appendError(msg, field.object.span, "field type mismatch");
+        try self.appendError(msg, field.object.span, try std.fmt.allocPrint(self.alloc, "field {s} on {s} is not {s} (got {s})", .{
+            field.name,
+            types_mod.typeName(self.inferExprType(field.object)),
+            types_mod.typeName(expected),
+            types_mod.typeName(actual),
+        }));
     }
 
     fn appendReturnMismatch(self: *SemanticChecker, span: ast.Span, expected: types_mod.TypeInfo, actual: types_mod.TypeInfo) !void {
@@ -497,7 +542,10 @@ const SemanticChecker = struct {
             types_mod.typeName(expected),
             types_mod.typeName(actual),
         });
-        try self.appendError(msg, span, "return value");
+        try self.appendError(msg, span, try std.fmt.allocPrint(self.alloc, "return type not {s} (got {s})", .{
+            types_mod.typeName(expected),
+            types_mod.typeName(actual),
+        }));
     }
 
     fn appendError(self: *SemanticChecker, message: []const u8, span: ast.Span, label: []const u8) !void {
@@ -505,7 +553,7 @@ const SemanticChecker = struct {
         try self.errors.append(self.alloc, .{ .span = .{
             .span = span,
             .role = .primary,
-            .message = label,
+            .message = try self.alloc.dupe(u8, label),
         } });
     }
 };

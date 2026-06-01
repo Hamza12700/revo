@@ -167,12 +167,6 @@ fn mul_f(args: []const Data, vm: *VM) !NativeResult {
     return .{ .ok = result_str };
 }
 
-/// > string:tostring() -> string
-/// returns string as-is (identity for tostring)
-fn tostring_f(args: []const Data, _: *VM) !NativeResult {
-    return .{ .ok = args[0] };
-}
-
 /// > string:sub(start: number, length: number) -> string
 /// extracts substring from start with given length
 fn sub_f(args: []const Data, vm: *VM) !NativeResult {

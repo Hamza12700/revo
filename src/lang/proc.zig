@@ -118,13 +118,6 @@ const ProcEnv = struct {
         return cloned;
     }
 
-    fn isActive(self: *const ProcEnv, name: []const u8) bool {
-        for (self.active.items) |active_name| {
-            if (std.mem.eql(u8, active_name, name)) return true;
-        }
-        return false;
-    }
-
     fn pushActive(self: *ProcEnv, name: []const u8) !void {
         try self.active.append(self.allocator, name);
     }

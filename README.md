@@ -142,16 +142,16 @@ you will need [the latest **stable** version of zig](https://ziglang.org/downloa
 
 available on most package managers as `zig`
 
-## on posix systems
+## on posix (linux/bsd/mac)
 
 ```bash
 git clone https://github.com/if-not-nil/revo && cd revo
 git submodule update --init --recursive
-# or -Doptimize=ReleaseSmall for an ~700kb executable
-zig build -Doptimize=ReleaseFast
+# or -Doptimize=ReleaseSmall for a smaller executable
+zig build --fetch -Doptimize=ReleaseFast
 cp ./zig-out/bin/revo ~/.local/bin/revo
 
-# verify installation
+# should output the version
 revo --version
 ```
 
@@ -173,18 +173,17 @@ you can also get a dumb backend by doing `-Drepl=none`
 
 ```bash
 git clone https://github.com/if-not-nil/revo && cd revo
-zig build -Doptimize=ReleaseFast
+zig build --fetch -Doptimize=ReleaseFast
 
 mkdir "C:/tools/revo/bin"
 copy ./zig-out/bin/revo C:/tools/revo/bin
 
 # now add it to PATH by doing:
-# 1. press Win+S
-# 2. type "env" and then press enter. it should take you to the System Properties > Advanced tab
-# 3. click "Environment Variables" and then "Path" in the "System variables"
-# 4. add new at "C:\tools\revo\bin"
+# - Win+S -> `env` -> <Enter>
+# - click "Environment Variables" and then "Path" in the "System variables"
+# - add new at "C:\tools\revo\bin"
 #    , or put it in one of the existing ones, if you know what you're doing
-# 5. press OK for all of the tabs you've opened
+# - press OK for all of the tabs you've opened
 # after that, you have to open a new CMD/Powershell window for PATH changes to take effect
 
 # verify installation
@@ -244,6 +243,32 @@ zig build test --summary all
 # opt: -Dtest_filter="some test name filter"
 ```
 
+### revolt (the language server)
+
+revo ships an LSP server at `src/lsp/`. it handles diagnostics, go-to-definition, hover,
+references, document symbols, and workspace symbols.
+
+to build:
+
+```bash
+zig build revolt
+```
+
+the binary lands at `zig-out/bin/revolt`
+
+#### neovim setup
+
+```lua
+vim.lsp.config('revolt', {
+  cmd = { 'revolt' },
+  filetypes = { 'rv' },
+  root_markers = { 'lib.json', 'exe.json', '.git' },
+})
+vim.lsp.enable('revolt')
+```
+
+see [docs/lsp.md](src/lsp/README.md) for the full feature list, troubleshooting, and other editors
+
 ### contributing
 
 recommending to a friend is always greatly appreciated. any contributions are welcome!
@@ -253,6 +278,7 @@ see [CONTRIBUTING.md](./CONTRIBUTING.md)
 ## credits
 
 - [isocline](https://github.com/daanx/isocline) by daanx - MIT
+- [lsp-kit](https://github.com/zigtools/lsp-kit) by the zigtools team - MIT
 
 # license
 

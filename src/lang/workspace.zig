@@ -5,6 +5,10 @@ const lang = @import("./root.zig");
 const semantic = @import("semantic.zig");
 const VM = revo.VM;
 
+//
+// types
+//
+
 pub const FileId = u32;
 
 pub const Snapshot = struct {
@@ -23,6 +27,7 @@ const FileEntry = struct {
     project_root: []u8 = &.{},
 };
 
+// cache for analyzeDetailed (full build)
 const CacheEntry = struct {
     version: u32,
     opts: lang.BuildOptions,
@@ -30,12 +35,21 @@ const CacheEntry = struct {
     symbols: []Symbol,
 };
 
+/// cached fn sig: params as name+type pairs, return type, doc
+const FnSig = struct {
+    params: []ParamInfo,
+    return_type: []const u8,
+    doc: ?[]const u8,
+};
+
+// cache for inspectDetailed (quick inspect)
 const InspectCacheEntry = struct {
     version: u32,
     opts: lang.BuildOptions,
     symbols: []Symbol,
     dependencies: []FileId,
     diagnostics: ?lang.Error = null,
+    sig_map: std.StringHashMapUnmanaged(FnSig) = .empty,
 };
 
 pub const Analysis = struct {
@@ -54,7 +68,7 @@ pub const Analysis = struct {
         if (self.diagnostics) |err| {
             lang.deinitError(alloc, err);
         }
-        alloc.free(self.symbols);
+        freeSymbols(alloc, self.symbols);
         alloc.free(self.dependencies);
     }
 };
@@ -86,6 +100,7 @@ pub const Symbol = struct {
     name: []const u8,
     kind: SymbolKind,
     range: Range,
+    type_name: []const u8 = "",
 };
 
 pub const Hover = struct {
@@ -94,6 +109,30 @@ pub const Hover = struct {
 
     pub fn deinit(self: *Hover, alloc: std.mem.Allocator) void {
         alloc.free(self.text);
+    }
+};
+
+pub const ParamInfo = struct {
+    name: []const u8,
+    type_name: []const u8,
+};
+
+pub const SignatureHelp = struct {
+    name: []const u8,
+    params: []ParamInfo,
+    return_type: []const u8,
+    doc: ?[]const u8,
+    active_param: u32,
+
+    pub fn deinit(self: *SignatureHelp, alloc: std.mem.Allocator) void {
+        alloc.free(self.name);
+        for (self.params) |p| {
+            alloc.free(p.name);
+            alloc.free(p.type_name);
+        }
+        alloc.free(self.params);
+        alloc.free(self.return_type);
+        if (self.doc) |d| alloc.free(d);
     }
 };
 
@@ -108,20 +147,25 @@ pub const OpenOptions = struct {
     project_root: []const u8 = &.{},
 };
 
+//
+// workspace
+//
+
 pub const Workspace = struct {
     alloc: std.mem.Allocator,
     vm: ?*VM,
-    files: std.ArrayList(FileEntry),
+    files: std.ArrayList(FileEntry), // open file entries
     file_index: std.AutoHashMap(FileId, usize),
     file_names: std.StringHashMap(FileId),
     dependencies: std.AutoHashMap(FileId, []FileId),
     reverse_deps: std.AutoHashMap(FileId, []FileId),
-    cache: std.AutoHashMap(FileId, CacheEntry),
-    inspect_cache: std.AutoHashMap(FileId, InspectCacheEntry),
+    cache: std.AutoHashMap(FileId, CacheEntry), // full build cache
+    inspect_cache: std.AutoHashMap(FileId, InspectCacheEntry), // quick inspect cache
     symbol_index: std.StringHashMap([]IndexedSymbol),
     symbol_index_dirty: bool = true,
     next_file_id: FileId = 1,
 
+    // alloc workspace; vm must be put on later
     pub fn init(alloc: std.mem.Allocator) !Workspace {
         return .{
             .alloc = alloc,
@@ -160,15 +204,20 @@ pub const Workspace = struct {
         self.inspect_cache.deinit();
         {
             var it = self.symbol_index.iterator();
-            while (it.next()) |entry| self.alloc.free(entry.value_ptr.*);
+            while (it.next()) |entry| {
+                self.alloc.free(entry.value_ptr.*);
+                self.alloc.free(entry.key_ptr.*);
+            }
         }
         self.symbol_index.deinit();
     }
 
+    /// ...in script mode
     pub fn open(self: *Workspace, name: []const u8, text: []const u8) !FileId {
         return self.openWith(name, text, .{});
     }
 
+    /// ...with explicit mode/options
     pub fn openWith(self: *Workspace, name: []const u8, text: []const u8, opts: OpenOptions) !FileId {
         if (self.file_names.get(name)) |id| {
             try self.change(id, text);
@@ -218,6 +267,7 @@ pub const Workspace = struct {
         return id;
     }
 
+    /// replace file text; invalidates caches
     pub fn change(self: *Workspace, id: FileId, text: []const u8) !void {
         const entry = try self.entryPtr(id);
         const text_copy = try self.alloc.dupe(u8, text);
@@ -229,9 +279,10 @@ pub const Workspace = struct {
         self.symbol_index_dirty = true;
     }
 
+    /// close file; free its memory
     pub fn close(self: *Workspace, id: FileId) void {
         const index = self.file_index.get(id) orelse return;
-        const removed = self.files.swapRemove(index).?;
+        const removed = self.files.swapRemove(index);
         self.invalidateCache(id);
         self.removeDeps(id);
         if (self.reverse_deps.fetchRemove(id)) |kv| {
@@ -249,6 +300,7 @@ pub const Workspace = struct {
         self.symbol_index_dirty = true;
     }
 
+    /// ret: borrow of file metadata
     pub fn snapshot(self: *Workspace, id: FileId) ?Snapshot {
         const index = self.file_index.get(id) orelse return null;
         const entry = self.files.items[index];
@@ -264,6 +316,7 @@ pub const Workspace = struct {
         return self.snapshot(id).?.version;
     }
 
+    /// check if cached version is outdated
     pub fn isStale(self: *Workspace, id: FileId, version: u32) bool {
         return !(self.currentVersion(id) == version);
     }
@@ -271,7 +324,10 @@ pub const Workspace = struct {
     fn rebuildSymbolIndex(self: *Workspace) void {
         {
             var it = self.symbol_index.iterator();
-            while (it.next()) |entry| self.alloc.free(entry.value_ptr.*);
+            while (it.next()) |entry| {
+                self.alloc.free(entry.value_ptr.*);
+                self.alloc.free(entry.key_ptr.*);
+            }
         }
         self.symbol_index.clearRetainingCapacity();
 
@@ -285,9 +341,9 @@ pub const Workspace = struct {
                     .kind = sym.kind,
                 };
                 if (self.symbol_index.getPtr(name_copy)) |list| {
+                    self.alloc.free(name_copy);
                     const new_len = list.len + 1;
                     const new_list = self.alloc.realloc(list.*, new_len) catch {
-                        self.alloc.free(name_copy);
                         continue;
                     };
                     new_list[new_len - 1] = entry;
@@ -309,6 +365,7 @@ pub const Workspace = struct {
         self.symbol_index_dirty = false;
     }
 
+    /// workspace/symbol lookup across all open files
     pub fn findSymbols(self: *Workspace, alloc: std.mem.Allocator, name: []const u8) ![]Location {
         if (self.symbol_index_dirty) self.rebuildSymbolIndex();
         const syms = self.symbol_index.get(name) orelse return alloc.alloc(Location, 0);
@@ -327,6 +384,7 @@ pub const Workspace = struct {
         return locations;
     }
 
+    /// full compile; returns BuildResult (ok/err)
     pub fn analyze(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -343,6 +401,8 @@ pub const Workspace = struct {
         return .{ .err = analysis.diagnostics.? };
     }
 
+    /// full compile
+    /// ret: detailed Analysis with artifact + diagnostics
     pub fn analyzeDetailed(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -363,7 +423,7 @@ pub const Workspace = struct {
                     .artifact = artifact,
                     .cached = true,
                     .symbols = try copySymbols(alloc, cached.symbols),
-                    .dependencies = try self.copyDeps(id),
+                    .dependencies = try self.copyDeps(alloc, id),
                 };
             }
         }
@@ -390,8 +450,8 @@ pub const Workspace = struct {
                     .report = report,
                 } },
                 .cached = false,
-                .symbols = try self.alloc.alloc(Symbol, 0),
-                .dependencies = try self.alloc.alloc(FileId, 0),
+                .symbols = try alloc.alloc(Symbol, 0),
+                .dependencies = try alloc.alloc(FileId, 0),
             };
         }
 
@@ -413,7 +473,7 @@ pub const Workspace = struct {
                 const cache_artifact = try copyArtifact(self.alloc, artifact);
                 errdefer deinitArtifact(self.alloc, cache_artifact);
                 const cache_symbols = try copySymbols(self.alloc, symbols);
-                errdefer self.alloc.free(cache_symbols);
+                errdefer freeSymbols(self.alloc, cache_symbols);
                 try self.putCache(id, snap.version, opts, cache_artifact, cache_symbols);
                 const copy = try copyArtifact(alloc, artifact);
                 errdefer deinitArtifact(alloc, copy);
@@ -422,7 +482,7 @@ pub const Workspace = struct {
                     .artifact = copy,
                     .cached = false,
                     .symbols = try copySymbols(alloc, symbols),
-                    .dependencies = try self.copyDeps(id),
+                    .dependencies = try self.copyDeps(alloc, id),
                 };
             },
             .err => |err| .{
@@ -430,11 +490,12 @@ pub const Workspace = struct {
                 .diagnostics = try copyError(alloc, err, snap.name, snap.text),
                 .cached = false,
                 .symbols = try copySymbols(alloc, symbols),
-                .dependencies = try self.copyDeps(id),
+                .dependencies = try self.copyDeps(alloc, id),
             },
         };
     }
 
+    /// convenience: open + analyze
     pub fn analyzeSource(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -446,19 +507,54 @@ pub const Workspace = struct {
         return self.analyze(alloc, id, opts);
     }
 
-    pub fn diagnostics(self: *Workspace, alloc: std.mem.Allocator, id: FileId, opts: lang.BuildOptions) !?lang.Error {
+    /// get diagnostics for a file (or null if clean)
+    /// runs full compile pipeline to catch all errors
+    pub fn diagnostics(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        opts: lang.BuildOptions,
+    ) !?lang.Error {
         var analysis = try self.inspectDetailed(alloc, id, opts);
-        defer analysis.deinit(alloc);
-        return analysis.diagnostics;
+        if (analysis.diagnostics) |diag| {
+            analysis.diagnostics = null;
+            defer analysis.deinit(alloc);
+            return diag;
+        }
+        analysis.deinit(alloc);
+        var full = self.analyzeDetailed(alloc, id, opts) catch |err| switch (err) {
+            error.VmUnavailable => return null,
+            else => |e| return e,
+        };
+        if (full.diagnostics) |diag| {
+            full.diagnostics = null;
+            defer full.deinit(alloc);
+            return diag;
+        }
+        full.deinit(alloc);
+        return null;
     }
 
-    pub fn documentSymbols(self: *Workspace, alloc: std.mem.Allocator, id: FileId, opts: lang.BuildOptions) ![]Symbol {
+    /// returns syms defined in a file
+    pub fn documentSymbols(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        opts: lang.BuildOptions,
+    ) ![]Symbol {
         var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         return try copySymbols(alloc, analysis.symbols);
     }
 
-    pub fn definition(self: *Workspace, alloc: std.mem.Allocator, id: FileId, pos: Position, opts: lang.BuildOptions) !?Location {
+    /// go-to-definition: find the binding that a word at `pos` refers to
+    pub fn definition(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        pos: Position,
+        opts: lang.BuildOptions,
+    ) !?Location {
         var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
@@ -466,25 +562,126 @@ pub const Workspace = struct {
         return bestLocation(self, alloc, name, id, pos, opts);
     }
 
-    pub fn hover(self: *Workspace, alloc: std.mem.Allocator, id: FileId, pos: Position, opts: lang.BuildOptions) !?Hover {
+    /// markdown hover: kind, type, definition source, location
+    pub fn hover(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        pos: Position,
+        opts: lang.BuildOptions,
+    ) !?Hover {
         var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
         const name = wordAtPosition(snap.text, pos) orelse return null;
         const def = try self.definition(alloc, id, pos, opts) orelse return null;
-        const text = try std.fmt.allocPrint(alloc, "{s} at {s}:{d}:{d}", .{
-            name,
-            def.name,
-            def.range.start.line,
-            def.range.start.character,
-        });
+
+        // find symbol kind and type from analysis
+        var kind: []const u8 = "value";
+        var type_name: []const u8 = "";
+        for (analysis.symbols) |sym| {
+            if (std.mem.eql(u8, sym.name, name) and
+                sym.range.start.line == def.range.start.line)
+            {
+                kind = switch (sym.kind) {
+                    .binding => "binding",
+                    .function => "function",
+                    .struct_type => "struct",
+                    .type_alias => "type alias",
+                };
+                type_name = sym.type_name;
+                break;
+            }
+        }
+
+        // extract the definition source line
+        var def_source: []const u8 = "";
+        {
+            var i: usize = 0;
+            var cur: u32 = 1;
+            while (i < snap.text.len) : (i += 1) {
+                if (cur == def.range.start.line) {
+                    const start = i;
+                    const end = std.mem.indexOfScalarPos(u8, snap.text, i, '\n') orelse snap.text.len;
+                    def_source = std.mem.trim(u8, snap.text[start..end], " \t\r");
+                    break;
+                }
+                if (snap.text[i] == '\n') cur += 1;
+            }
+        }
+
+        const text = if (type_name.len > 0)
+            try std.fmt.allocPrint(alloc,
+                \\**{s}** -- {s}
+                \\_type: {s}_
+                \\```text
+                \\{s}
+                \\```
+                \\_at {s}:{d}:{d}_
+            , .{ name, kind, type_name, def_source, def.name, def.range.start.line, def.range.start.character })
+        else
+            try std.fmt.allocPrint(alloc,
+                \\**{s}** -- {s}
+                \\```text
+                \\{s}
+                \\```
+                \\_at {s}:{d}:{d}_
+            , .{ name, kind, def_source, def.name, def.range.start.line, def.range.start.character });
         return .{
             .text = text,
             .range = def.range,
         };
     }
 
-    pub fn references(self: *Workspace, alloc: std.mem.Allocator, id: FileId, pos: Position, opts: lang.BuildOptions) ![]Location {
+    /// signature help: call-site function signature with param info and doc
+    pub fn signatureHelp(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        pos: Position,
+        opts: lang.BuildOptions,
+    ) !?SignatureHelp {
+        const snap = self.snapshot(id) orelse return null;
+        const call_info = findCallAtPosition(snap.text, pos) orelse return null;
+
+        const def = try self.bestLocation(alloc, call_info.name, id, pos, opts) orelse return null;
+        _ = try self.inspectDetailed(alloc, def.file_id, opts);
+
+        const cache = self.inspect_cache.getPtr(def.file_id) orelse return null;
+        const sig = cache.sig_map.get(call_info.name) orelse return null;
+
+        const name_copy = try alloc.dupe(u8, call_info.name);
+        errdefer alloc.free(name_copy);
+        const params_copy = try alloc.alloc(ParamInfo, sig.params.len);
+        errdefer alloc.free(params_copy);
+        for (sig.params, 0..) |p, i| {
+            params_copy[i] = .{
+                .name = try alloc.dupe(u8, p.name),
+                .type_name = try alloc.dupe(u8, p.type_name),
+            };
+        }
+        const ret_copy = try alloc.dupe(u8, sig.return_type);
+        errdefer alloc.free(ret_copy);
+        const doc_copy = if (sig.doc) |d| try alloc.dupe(u8, d) else null;
+        errdefer if (doc_copy) |d| alloc.free(d);
+
+        return SignatureHelp{
+            .name = name_copy,
+            .params = params_copy,
+            .return_type = ret_copy,
+            .doc = doc_copy,
+            .active_param = call_info.active_param,
+        };
+    }
+
+    /// all references to a name in all dependencies
+    pub fn references(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        id: FileId,
+        pos: Position,
+        opts: lang.BuildOptions,
+    ) ![]Location {
         var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
@@ -499,6 +696,7 @@ pub const Workspace = struct {
         return out.toOwnedSlice(alloc);
     }
 
+    // quick inspection via inspect cache (no full compile)
     pub fn inspectDetailed(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -506,21 +704,7 @@ pub const Workspace = struct {
         opts: lang.BuildOptions,
     ) !Analysis {
         const snap = self.snapshot(id) orelse return error.FileNotOpen;
-        if (self.inspect_cache.get(id)) |cached| {
-            if (cached.version == snap.version and sameOpts(cached.opts, opts)) {
-                const cached_diag = if (cached.diagnostics) |diag|
-                    try copyError(alloc, diag, snap.name, snap.text)
-                else
-                    null;
-                return .{
-                    .snapshot = snap,
-                    .diagnostics = cached_diag,
-                    .cached = true,
-                    .symbols = try copySymbols(alloc, cached.symbols),
-                    .dependencies = try self.copyDeps(id),
-                };
-            }
-        }
+        if (try self.inspectCached(alloc, snap, id, opts)) |cached| return cached;
 
         var arena = std.heap.ArenaAllocator.init(self.alloc);
         defer arena.deinit();
@@ -533,63 +717,142 @@ pub const Workspace = struct {
         });
 
         if (parsed == .err) {
-            self.removeDeps(id);
-            var report = try parsed.err.report.copy(alloc);
-            report.source_name = try alloc.dupe(u8, snap.name);
-            report.source = try alloc.dupe(u8, snap.text);
-            const parse_error: lang.Error = .{ .parse = .{ .kind = parsed.err.kind, .report = report } };
-            const cache_diag = try copyError(self.alloc, parse_error, snap.name, snap.text);
-            errdefer lang.deinitError(self.alloc, cache_diag);
-            const empty_syms = try self.alloc.alloc(Symbol, 0);
-            errdefer self.alloc.free(empty_syms);
-            const empty_deps = try self.alloc.alloc(FileId, 0);
-            errdefer self.alloc.free(empty_deps);
-            try self.putInspectCache(id, snap.version, opts, empty_syms, empty_deps, cache_diag);
-            return .{
-                .snapshot = snap,
-                .diagnostics = parse_error,
-                .cached = false,
-                .symbols = try self.alloc.alloc(Symbol, 0),
-                .dependencies = try self.alloc.alloc(FileId, 0),
-            };
+            return self.inspectParseError(alloc, snap, id, opts, parsed.err);
         }
 
         const root = parsed.ok.root;
         const symbols = try self.collectSymbolsFromParsed(root);
-        errdefer self.alloc.free(symbols);
+        errdefer freeSymbols(self.alloc, symbols);
         const deps = try self.collectDepsFromParsed(snap, root);
         errdefer self.alloc.free(deps);
         try self.updateDeps(id, deps);
-        const semantic_error = try semantic.analyze(alloc, root, snap.name, snap.text);
+        const known_globals = try getKnownGlobals(self, alloc);
+        defer alloc.free(known_globals);
+
+        // name -> type_name, populated by sem checker
+        var type_map = std.StringHashMap([]const u8).init(alloc);
+        defer {
+            var it = type_map.iterator();
+            while (it.next()) |entry| {
+                alloc.free(entry.key_ptr.*);
+                alloc.free(entry.value_ptr.*);
+            }
+            type_map.deinit();
+        }
+
+        const semantic_error = try semantic.analyze(alloc, root, snap.name, snap.text, known_globals, &type_map);
         const cache_diag = if (semantic_error) |err|
             try copyError(self.alloc, err, snap.name, snap.text)
         else
             null;
         errdefer if (cache_diag) |d| lang.deinitError(self.alloc, d);
-        const cache_symbols = try copySymbols(self.alloc, symbols);
-        errdefer self.alloc.free(cache_symbols);
-        const cache_deps = try self.copyDeps(id);
-        errdefer self.alloc.free(cache_deps);
-        try self.putInspectCache(id, snap.version, opts, cache_symbols, cache_deps, cache_diag);
 
+        for (symbols) |*sym| {
+            if (type_map.get(sym.name)) |t| {
+                sym.type_name = try self.alloc.dupe(u8, t);
+            }
+        }
+
+        // collect fn signatures from ast
+        var sig_map: std.StringHashMapUnmanaged(FnSig) = .empty;
+        errdefer if (sig_map.size > 0) freeSigMap(self.alloc, &sig_map);
+        self.collectSigsFromParsed(root, &sig_map);
+
+        // annotate param types from type_map where not explicitly set
+        var sig_it = sig_map.iterator();
+        while (sig_it.next()) |sig_entry| {
+            for (sig_entry.value_ptr.params) |*p| {
+                if (p.type_name.len == 0) {
+                    if (type_map.get(p.name)) |t| {
+                        p.type_name = try self.alloc.dupe(u8, t);
+                    }
+                }
+            }
+        }
+
+        const cache_symbols = try copySymbols(self.alloc, symbols);
+        errdefer freeSymbols(self.alloc, cache_symbols);
+        const cache_deps = try self.copyDeps(self.alloc, id);
+        errdefer self.alloc.free(cache_deps);
+        try self.putInspectCache(id, snap.version, opts, cache_symbols, cache_deps, cache_diag, sig_map);
+
+        defer freeSymbols(self.alloc, symbols);
         if (semantic_error) |err| {
             return .{
                 .snapshot = snap,
                 .diagnostics = err,
                 .cached = false,
-                .symbols = symbols,
-                .dependencies = try self.copyDeps(id),
+                .symbols = try copySymbols(alloc, symbols),
+                .dependencies = try self.copyDeps(alloc, id),
             };
         }
 
         return .{
             .snapshot = snap,
             .cached = false,
-            .symbols = symbols,
-            .dependencies = cache_deps,
+            .symbols = try copySymbols(alloc, symbols),
+            .dependencies = try self.copyDeps(alloc, id),
         };
     }
 
+    /// check inspect cache and return cached Analysis if valid
+    fn inspectCached(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        snap: Snapshot,
+        id: FileId,
+        opts: lang.BuildOptions,
+    ) !?Analysis {
+        const cached = self.inspect_cache.get(id) orelse return null;
+        if (cached.version != snap.version or !sameOpts(cached.opts, opts)) return null;
+        const cached_diag = if (cached.diagnostics) |diag|
+            try copyError(alloc, diag, snap.name, snap.text)
+        else
+            null;
+        return Analysis{
+            .snapshot = snap,
+            .diagnostics = cached_diag,
+            .cached = true,
+            .symbols = try copySymbols(alloc, cached.symbols),
+            .dependencies = try self.copyDeps(alloc, id),
+        };
+    }
+
+    /// cache error state and return Analysis with diags
+    fn inspectParseError(
+        self: *Workspace,
+        alloc: std.mem.Allocator,
+        snap: Snapshot,
+        id: FileId,
+        opts: lang.BuildOptions,
+        err: lang.ParseFailure,
+    ) !Analysis {
+        self.removeDeps(id);
+        var report = try err.report.copy(alloc);
+        report.source_name = try alloc.dupe(u8, snap.name);
+        report.source = try alloc.dupe(u8, snap.text);
+
+        const parse_error: lang.Error = .{ .parse = .{ .kind = err.kind, .report = report } };
+        const cache_diag = try copyError(self.alloc, parse_error, snap.name, snap.text);
+        errdefer lang.deinitError(self.alloc, cache_diag);
+
+        const empty_syms = try self.alloc.alloc(Symbol, 0);
+        errdefer self.alloc.free(empty_syms);
+
+        const empty_deps = try self.alloc.alloc(FileId, 0);
+        errdefer self.alloc.free(empty_deps);
+
+        try self.putInspectCache(id, snap.version, opts, empty_syms, empty_deps, cache_diag, .empty);
+        return .{
+            .snapshot = snap,
+            .diagnostics = parse_error,
+            .cached = false,
+            .symbols = try alloc.alloc(Symbol, 0),
+            .dependencies = try alloc.alloc(FileId, 0),
+        };
+    }
+
+    // store build artifact in cache
     fn putCache(
         self: *Workspace,
         id: FileId,
@@ -606,19 +869,21 @@ pub const Workspace = struct {
         };
         if (self.cache.getPtr(id)) |slot| {
             deinitArtifact(self.alloc, slot.artifact);
-            self.alloc.free(slot.symbols);
+            freeSymbols(self.alloc, slot.symbols);
             slot.* = entry;
         } else {
             try self.cache.put(id, entry);
         }
     }
 
+    /// invalidate a file and all its transitive dependents
     fn invalidateCache(self: *Workspace, id: FileId) void {
         var visited = std.AutoHashMap(FileId, void).init(self.alloc);
         defer visited.deinit();
         self.invalidateCacheImpl(id, &visited);
     }
 
+    /// recursive invalidate; visited prevents cycle chokes
     fn invalidateCacheImpl(
         self: *Workspace,
         id: FileId,
@@ -629,12 +894,13 @@ pub const Workspace = struct {
 
         if (self.cache.fetchRemove(id)) |kv| {
             deinitArtifact(self.alloc, kv.value.artifact);
-            self.alloc.free(kv.value.symbols);
+            freeSymbols(self.alloc, kv.value.symbols);
         }
         if (self.inspect_cache.fetchRemove(id)) |kv| {
-            self.alloc.free(kv.value.symbols);
+            freeSymbols(self.alloc, kv.value.symbols);
             self.alloc.free(kv.value.dependencies);
             if (kv.value.diagnostics) |diag| lang.deinitError(self.alloc, diag);
+            if (kv.value.sig_map.size > 0) freeSigMap(self.alloc, &kv.value.sig_map);
         }
 
         if (self.reverse_deps.get(id)) |dependents| {
@@ -642,28 +908,7 @@ pub const Workspace = struct {
         }
     }
 
-    fn collectDeps(
-        self: *Workspace,
-        snap: Snapshot,
-        opts: lang.BuildOptions,
-    ) ![]FileId {
-        var arena = std.heap.ArenaAllocator.init(self.alloc);
-        defer arena.deinit();
-
-        const parsed = try lang.parse(arena.allocator(), .{
-            .name = snap.name,
-            .text = snap.text,
-        }, .{
-            .include_default_macros = opts.include_default_macros,
-        });
-
-        const root = switch (parsed) {
-            .ok => |ok| ok.root,
-            .err => return try self.alloc.alloc(FileId, 0),
-        };
-        return self.collectDepsFromParsed(snap, root);
-    }
-
+    /// import path to an open file, checking both source dir and project root
     fn resolveOpenImport(
         self: *Workspace,
         source_name: []const u8,
@@ -684,6 +929,7 @@ pub const Workspace = struct {
         return null;
     }
 
+    /// resolve a relative import path to an absolute one; appends .rv if missing
     fn resolveImportPath(
         self: *Workspace,
         source_name: []const u8,
@@ -703,6 +949,7 @@ pub const Workspace = struct {
         return with_ext;
     }
 
+    /// replace a file's dependency set; add/remove reverse deps as needed
     fn updateDeps(self: *Workspace, id: FileId, new_deps: []FileId) !void {
         const old_deps = if (self.dependencies.fetchRemove(id)) |kv| kv.value else &.{};
 
@@ -726,6 +973,7 @@ pub const Workspace = struct {
         }
     }
 
+    /// remove all deps for a file and clear reverse deps
     fn removeDeps(self: *Workspace, id: FileId) void {
         if (self.dependencies.fetchRemove(id)) |kv| {
             for (kv.value) |dep| self.removeReverseDep(dep, id) catch {};
@@ -733,6 +981,7 @@ pub const Workspace = struct {
         }
     }
 
+    /// mark `id` as a dependent of `dep`
     fn addReverseDep(self: *Workspace, dep: FileId, id: FileId) !void {
         const current = self.reverse_deps.get(dep);
         if (current) |items| {
@@ -749,6 +998,7 @@ pub const Workspace = struct {
         }
     }
 
+    /// remove `id` from `dep`'s reverse dependency list
     fn removeReverseDep(self: *Workspace, dep: FileId, id: FileId) !void {
         const current = self.reverse_deps.get(dep) orelse return;
         var pos: ?usize = null;
@@ -773,25 +1023,27 @@ pub const Workspace = struct {
 
     fn clearFiles(self: *Workspace) void {
         while (self.files.items.len != 0) {
-            const entry = self.files.pop().?;
+            const entry = self.files.pop() orelse unreachable;
             self.alloc.free(entry.name);
             self.alloc.free(entry.text);
         }
     }
 
+    /// free all build and inspect caches
     fn clearCache(self: *Workspace) void {
         var it = self.cache.iterator();
         while (it.next()) |entry| {
             deinitArtifact(self.alloc, entry.value_ptr.artifact);
-            self.alloc.free(entry.value_ptr.symbols);
+            freeSymbols(self.alloc, entry.value_ptr.symbols);
         }
         var inspect_it = self.inspect_cache.iterator();
         while (inspect_it.next()) |entry| {
-            self.alloc.free(entry.value_ptr.symbols);
+            freeSymbols(self.alloc, entry.value_ptr.symbols);
             self.alloc.free(entry.value_ptr.dependencies);
             if (entry.value_ptr.diagnostics) |diag| {
                 lang.deinitError(self.alloc, diag);
             }
+            if (entry.value_ptr.sig_map.size > 0) freeSigMap(self.alloc, &entry.value_ptr.sig_map);
         }
     }
 
@@ -804,11 +1056,12 @@ pub const Workspace = struct {
         self.reverse_deps.clearRetainingCapacity();
     }
 
-    fn copyDeps(self: *Workspace, id: FileId) ![]FileId {
-        const deps = self.dependencies.get(id) orelse return self.alloc.alloc(FileId, 0);
-        return self.alloc.dupe(FileId, deps);
+    fn copyDeps(self: *Workspace, alloc: std.mem.Allocator, id: FileId) ![]FileId {
+        const deps = self.dependencies.get(id) orelse return alloc.alloc(FileId, 0);
+        return alloc.dupe(FileId, deps);
     }
 
+    /// store results in the inspect cache (symbols + deps + diagnostics)
     fn putInspectCache(
         self: *Workspace,
         id: FileId,
@@ -817,6 +1070,7 @@ pub const Workspace = struct {
         symbols: []Symbol,
         dependencies: []FileId,
         diag: ?lang.Error,
+        sig_map: std.StringHashMapUnmanaged(FnSig),
     ) !void {
         const entry = InspectCacheEntry{
             .version = version,
@@ -824,17 +1078,20 @@ pub const Workspace = struct {
             .symbols = symbols,
             .dependencies = dependencies,
             .diagnostics = diag,
+            .sig_map = sig_map,
         };
         if (self.inspect_cache.getPtr(id)) |slot| {
-            self.alloc.free(slot.symbols);
+            freeSymbols(self.alloc, slot.symbols);
             self.alloc.free(slot.dependencies);
             if (slot.diagnostics) |cached_d| lang.deinitError(self.alloc, cached_d);
+            if (slot.sig_map.size > 0) freeSigMap(self.alloc, &slot.sig_map);
             slot.* = entry;
         } else {
             try self.inspect_cache.put(id, entry);
         }
     }
 
+    /// transitive closure of all dependencies
     fn dependencyClosure(self: *Workspace, alloc: std.mem.Allocator, id: FileId) ![]FileId {
         var visited = std.AutoHashMap(FileId, void).init(alloc);
         defer visited.deinit();
@@ -846,6 +1103,7 @@ pub const Workspace = struct {
         return out.toOwnedSlice(alloc);
     }
 
+    /// recursive deps walker; visited prevents cycles
     fn collectDependencyClosure(
         self: *Workspace,
         id: FileId,
@@ -862,24 +1120,7 @@ pub const Workspace = struct {
         }
     }
 
-    fn collectSymbols(self: *Workspace, snap: Snapshot, opts: lang.BuildOptions) ![]Symbol {
-        var arena = std.heap.ArenaAllocator.init(self.alloc);
-        defer arena.deinit();
-
-        const parsed = try lang.parse(arena.allocator(), .{
-            .name = snap.name,
-            .text = snap.text,
-        }, .{
-            .include_default_macros = opts.include_default_macros,
-        });
-
-        const root = switch (parsed) {
-            .ok => |ok| ok.root,
-            .err => return self.alloc.alloc(Symbol, 0),
-        };
-        return self.collectSymbolsFromParsed(root);
-    }
-
+    /// walk AST and collect bindings, functions, structs, type aliases
     fn collectSymbolsFromParsed(self: *Workspace, root: *lang.Node) ![]Symbol {
         var out = try std.ArrayList(Symbol).initCapacity(self.alloc, 8);
         errdefer out.deinit(self.alloc);
@@ -888,6 +1129,64 @@ pub const Workspace = struct {
         return out.toOwnedSlice(self.alloc);
     }
 
+    /// walk AST for fn_expr bindings and populate sig_map with ParamInfo slices
+    fn collectSigsFromParsed(
+        self: *Workspace,
+        root: *const lang.Node,
+        sig_map: *std.StringHashMapUnmanaged(FnSig),
+    ) void {
+        var visitor = SigVisitor{
+            .ws = self,
+            .sig_map = sig_map,
+            .alloc = self.alloc,
+        };
+        visitor.visit(root);
+    }
+
+    const SigVisitor = struct {
+        ws: *Workspace,
+        sig_map: *std.StringHashMapUnmanaged(FnSig),
+        alloc: std.mem.Allocator,
+
+        pub fn visit(self: *@This(), node: *const lang.Node) void {
+            switch (node.expr) {
+                .binding => |b| {
+                    if (b.target.expr != .ident) return;
+                    if (b.value.expr != .fn_expr) return;
+                    const fn_expr = b.value.expr.fn_expr;
+                    const name = b.target.expr.ident;
+
+                    const params = self.alloc.alloc(ParamInfo, fn_expr.params.len) catch return;
+                    errdefer self.alloc.free(params);
+                    for (fn_expr.params, params) |src, *dst| {
+                        dst.* = .{
+                            .name = self.alloc.dupe(u8, src.name) catch return,
+                            .type_name = if (src.type_name) |tn| self.alloc.dupe(u8, tn) catch return else "",
+                        };
+                    }
+
+                    const return_type = if (fn_expr.return_type) |rt|
+                        self.alloc.dupe(u8, rt) catch return
+                    else
+                        "";
+                    const doc = if (fn_expr.doc) |d|
+                        self.alloc.dupe(u8, d) catch return
+                    else
+                        null;
+
+                    const name_owned = self.alloc.dupe(u8, name) catch return;
+                    self.sig_map.put(self.alloc, name_owned, .{
+                        .params = params,
+                        .return_type = return_type,
+                        .doc = doc,
+                    }) catch return;
+                },
+                else => lang.ast.walkAST(@This(), self, node),
+            }
+        }
+    };
+
+    /// walk AST for import expressions and resolve them to FileIds
     fn collectDepsFromParsed(self: *Workspace, snap: Snapshot, root: *lang.Node) ![]FileId {
         var out = try std.ArrayList(FileId).initCapacity(self.alloc, 4);
         errdefer out.deinit(self.alloc);
@@ -905,6 +1204,7 @@ pub const Workspace = struct {
         return out.toOwnedSlice(self.alloc);
     }
 
+    /// find all occurrences of `name` in a file (text search)
     fn collectReferencesInFile(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -928,6 +1228,7 @@ pub const Workspace = struct {
         }
     }
 
+    /// find the best (closest but before cursor) definition of `name`
     fn bestLocation(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -950,6 +1251,7 @@ pub const Workspace = struct {
         return null;
     }
 
+    /// search symbols in one file for the best definition match
     fn pickBestFromFile(
         self: *Workspace,
         alloc: std.mem.Allocator,
@@ -959,6 +1261,7 @@ pub const Workspace = struct {
         opts: lang.BuildOptions,
         best: *?Location,
     ) !void {
+        const snap_name = (self.snapshot(id) orelse return).name;
         var analysis = try self.inspectDetailed(alloc, id, opts);
         defer analysis.deinit(alloc);
         for (analysis.symbols) |sym| {
@@ -967,7 +1270,7 @@ pub const Workspace = struct {
                 if (best.* == null or positionBefore(best.*.?.range.start, sym.range.start)) {
                     best.* = .{
                         .file_id = id,
-                        .name = self.snapshot(id).?.name,
+                        .name = snap_name,
                         .range = sym.range,
                     };
                 }
@@ -975,11 +1278,16 @@ pub const Workspace = struct {
         }
     }
 
+    /// id -> mut *FileEntry
     fn entryPtr(self: *Workspace, id: FileId) !*FileEntry {
         const index = self.file_index.get(id) orelse return error.FileNotOpen;
         return &self.files.items[index];
     }
 };
+
+//
+// helpers
+//
 
 fn sameOpts(a: lang.BuildOptions, b: lang.BuildOptions) bool {
     return a.include_default_macros == b.include_default_macros and
@@ -1035,11 +1343,55 @@ fn copyError(
 }
 
 fn copySymbols(alloc: std.mem.Allocator, symbols: []const Symbol) ![]Symbol {
-    return alloc.dupe(Symbol, symbols);
+    const dupes = try alloc.dupe(Symbol, symbols);
+    for (dupes) |*s| {
+        if (s.type_name.len > 0) {
+            s.type_name = try alloc.dupe(u8, s.type_name);
+        }
+    }
+    return dupes;
+}
+
+fn freeSymbols(alloc: std.mem.Allocator, symbols: []Symbol) void {
+    for (symbols) |sym| {
+        if (sym.type_name.len > 0) alloc.free(sym.type_name);
+    }
+    alloc.free(symbols);
+}
+
+fn freeSigMap(alloc: std.mem.Allocator, map: *const std.StringHashMapUnmanaged(FnSig)) void {
+    var it = map.iterator();
+    while (it.next()) |entry| {
+        alloc.free(entry.key_ptr.*);
+        for (entry.value_ptr.params) |p| {
+            if (p.name.len > 0) alloc.free(p.name);
+            if (p.type_name.len > 0) alloc.free(p.type_name);
+        }
+        alloc.free(entry.value_ptr.params);
+        if (entry.value_ptr.return_type.len > 0) alloc.free(entry.value_ptr.return_type);
+        if (entry.value_ptr.doc) |d| alloc.free(d);
+    }
+    const mut = @constCast(map);
+    mut.deinit(alloc);
 }
 
 fn positionBefore(a: Position, b: Position) bool {
     return a.line < b.line or (a.line == b.line and a.character <= b.character);
+}
+
+/// get known global names from the vm
+fn getKnownGlobals(ws: *Workspace, alloc: std.mem.Allocator) ![]const []const u8 {
+    const vm = ws.vm orelse return &.{};
+    var list = try std.ArrayList([]const u8).initCapacity(alloc, 64);
+    var cit = vm.const_globals.keyIterator();
+    while (cit.next()) |atom_id| {
+        try list.append(alloc, vm.atomName(atom_id.*));
+    }
+    var git = vm.globals.iterator();
+    while (git.next()) |entry| {
+        try list.append(alloc, vm.atomName(entry.key_ptr.*));
+    }
+    return list.toOwnedSlice(alloc);
 }
 
 fn offsetToPosition(text: []const u8, offset: usize) Position {
@@ -1100,6 +1452,57 @@ fn isWordChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
+/// result from text scan for a call at cursor
+const CallAtPos = struct {
+    name: []const u8,
+    active_param: u32,
+};
+
+/// TODO: botch
+/// scan backward from pos to find the enclosing function call, return
+/// the callee name and which argument the cursor is inside
+fn findCallAtPosition(text: []const u8, pos: Position) ?CallAtPos {
+    const offset = positionToOffset(text, pos) orelse return null;
+    if (offset == 0) return null;
+
+    var depth: i32 = 0;
+    var i = offset;
+    while (i > 0) {
+        i -= 1;
+        switch (text[i]) {
+            ')' => depth += 1,
+            '(' => {
+                if (depth == 0) {
+                    // found opening paren, so scan left for identifier
+                    var start = i;
+                    while (start > 0 and isWordChar(text[start - 1])) start -= 1;
+                    if (start < i) {
+                        const name = text[start..i];
+                        // count commas between ( and cursor at depth 0
+                        var active: u32 = 0;
+                        var j = i + 1;
+                        var inner_depth: i32 = 0;
+                        while (j < offset) : (j += 1) {
+                            switch (text[j]) {
+                                '(' => inner_depth += 1,
+                                ')' => inner_depth -= 1,
+                                ',' => {
+                                    if (inner_depth == 0) active += 1;
+                                },
+                                else => {},
+                            }
+                        }
+                        return .{ .name = name, .active_param = active };
+                    }
+                }
+                if (depth > 0) depth -= 1;
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
 const SymbolVisitor = struct {
     alloc: std.mem.Allocator,
     out: *std.ArrayList(Symbol),
@@ -1116,7 +1519,7 @@ const SymbolVisitor = struct {
                     .type_alias => |t| self.addName(t.name, .type_alias, node.span),
                     else => {},
                 }
-                // walkAST would re-visit d.inner — it's already handled above
+                // walkAST would re-visit d.inner; it's already handled above
             },
             .binding => |b| if (!self.in_decl) self.addBinding(b),
             .struct_def => |def| if (!self.in_decl) self.addName(def.name, .struct_type, node.span),
@@ -1151,6 +1554,10 @@ fn containsId(items: []const FileId, id: FileId) bool {
     return false;
 }
 
+//
+// import visitor
+//
+
 const ImportVisitor = struct {
     ws: *Workspace,
     out: *std.ArrayList(FileId),
@@ -1159,6 +1566,7 @@ const ImportVisitor = struct {
     project_root: []const u8,
     failed: bool,
 
+    // walk the AST; collect import exprs and resolve them
     pub fn visit(self: *@This(), node: *const lang.Node) void {
         if (node.expr == .import_expr) {
             const path = node.expr.import_expr;
@@ -1180,6 +1588,10 @@ const ImportVisitor = struct {
         lang.ast.walkAST(ImportVisitor, self, node);
     }
 };
+
+//
+// tests
+//
 
 test "workspace caches repeated analysis" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1341,7 +1753,8 @@ test "workspace query surface" {
     var hov = try ws.hover(alloc, id, .{ .line = 2, .character = 1 }, query_opts);
     try std.testing.expect(hov != null);
     defer if (hov) |*h| h.deinit(alloc);
-    try std.testing.expect(std.mem.indexOf(u8, hov.?.text, "x at") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hov.?.text, "int") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hov.?.text, "_type:") != null);
 }
 
 test "workspace diagnostics query" {
@@ -1353,6 +1766,32 @@ test "workspace diagnostics query" {
     defer ws.deinit();
 
     const id = try ws.open("<test>", "const x =");
+    const diag = try ws.diagnostics(alloc, id, .{});
+    try std.testing.expect(diag != null);
+}
+
+test "workspace diagnostics clean file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var ws = try Workspace.init(alloc);
+    defer ws.deinit();
+
+    const id = try ws.open("<test>", "let x = 1\nprint(x)");
+    const diag = try ws.diagnostics(alloc, id, .{});
+    try std.testing.expect(diag == null);
+}
+
+test "workspace diagnostics undefined name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var ws = try Workspace.init(alloc);
+    defer ws.deinit();
+
+    const id = try ws.open("<test>", "hiasdhfasduf");
     const diag = try ws.diagnostics(alloc, id, .{});
     try std.testing.expect(diag != null);
 }

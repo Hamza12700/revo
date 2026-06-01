@@ -1,4 +1,3 @@
-const std = @import("std");
 const revo = @import("../root.zig");
 const std_lib = @import("root.zig");
 const testing = revo.lang.testing;

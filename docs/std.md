@@ -67,7 +67,7 @@ returns table with the mt set
 
 ```ruby
 t = {}
-mt = {__len = fn() 42}
+mt = {get_val = fn() 42}
 set_metatable(t, mt)
 ```
 
@@ -107,8 +107,6 @@ creates a range tuple (start, step, stop)
 
 ### - `@range_from(start: number, step: number) -> tuple`
 creates a range tuple (start, step) without stop
-
-### - `@struct_new(arg0: table, arg1: table)`
 
 ### - `unwrap(result: tuple) -> any`
 unwraps result tuple, panics if not :ok
@@ -238,9 +236,6 @@ concatenates two strings
 ### - `string * n: number -> string`
 repeats string n times
 
-### - `string:tostring() -> string`
-returns string as-is (identity for tostring)
-
 ---
 # table
 
@@ -317,12 +312,6 @@ returns length of table array part
 
 ### - `table + other: table -> table`
 merges two tables (union)
-
-### - `table:tostring() -> string`
-converts table to display string
-
-### - `table:__debug() -> string`
-converts table to debug string
 
 ---
 # file

@@ -275,22 +275,6 @@ pub fn maybeCollectGarbage(self: *VM) void {
     vm_gc.maybeCollectGarbage(self);
 }
 
-fn doIncrementalSweep(self: *VM) void {
-    vm_gc.doIncrementalSweep(self);
-}
-
-fn processMarkStack(self: *VM) void {
-    vm_gc.processMarkStack(self);
-}
-
-inline fn markRoots(self: *VM) void {
-    vm_gc.markRoots(self);
-}
-
-inline fn pushMark(self: *VM, data: Data) void {
-    vm_gc.pushMark(self, data);
-}
-
 //
 // probably shouldnt be here but its fine
 //
@@ -312,10 +296,6 @@ pub inline fn pushMarkUpvalue(self: *VM, id: root.functions.UpvalueID) void {
 
 pub inline fn pushMarkStructInstance(self: *VM, id: struct_mod.StructInstanceID) void {
     vm_gc.pushMarkStructInstance(self, id);
-}
-
-inline fn markDataImpl(self: *VM, data: Data) void {
-    vm_gc.markDataImpl(self, data);
 }
 
 pub fn deinit(self: *VM) void {

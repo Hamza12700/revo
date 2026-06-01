@@ -4,7 +4,6 @@ const revo = @import("revo");
 const Compiler = revo.lang.compiler.Compiler;
 const Data = revo.Data;
 
-const ast = @import("../ast.zig");
 const emit = @import("emit.zig");
 const ir_mod = @import("ir.zig");
 const types_mod = @import("types.zig");

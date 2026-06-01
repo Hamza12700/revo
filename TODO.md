@@ -1,9 +1,13 @@
-# todos
-
-## 0.1 goals
+# little pieces of paper with "0.1" written on them
 
 these should be done before the language is considered complete:
 
+- [ ] annotate more code
+    this is being done after writing the code which is sorta weird
+- [ ] clean up the standard library
+    - [ ] make a clear abstraction for defining functions together with their docs and type definitions
+- [ ] variable arguments in user code
+- [ ] default function arguments
 - [x] **predictable type inference and typechecker**
   - [X] needed to optimize bytecode generation (e.g., distinguish `table_get` vs `tuple_get`)
   - [X] needed for zerocost comptime type-checking, like picking the right loop iterator
@@ -232,3 +236,16 @@ print functionality. not really a lisp in a tradition sense but looks fun to imp
 - [x] save bytecode to disk
 - [x] bytecode compilation flag (`-b`)
 - [x] custom bytecode output path (`-o`)
+
+# little pieces of paper with "maybe" written on them
+
+```
+p for planned,
+? for maybe,
+x for done
+```
+
+- optional style rules for the LSP
+    - [p] keep below 80 lines
+    - [?] any function with >80 lines must have doc comment
+    - [p] no unwrap or top-level `?`

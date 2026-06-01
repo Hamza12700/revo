@@ -5,17 +5,12 @@ const Data = revo.Data;
 const Instruction = revo.Instruction;
 const Opcode = revo.opcode.Opcode;
 const VM = revo.VM;
-const UpvalueSpec = revo.functions.UpvalueSpec;
 const LocalSlot = revo.LocalSlot;
 const ProgramCounter = revo.ProgramCounter;
-const Operand = revo.Operand;
-const Register = revo.opcode.Register;
-const memory = revo.memory;
 
 const ast = @import("../ast.zig");
 const Node = ast.Node;
 const Binding = ast.Binding;
-const StructItem = ast.StructItem;
 const expander = @import("../expander.zig");
 const emit = @import("emit.zig");
 const flow = @import("flow.zig");
@@ -1040,20 +1035,6 @@ pub const Compiler = struct {
         }
         if (had_error) return error.LoweringFailed;
         return reordered_args;
-    }
-
-    fn buildTypesList(
-        self: *Compiler,
-        type_opts: []const ?[]const u8,
-    ) ![]const []const u8 {
-        var list = try std.ArrayList([]const u8).initCapacity(
-            self.alloc,
-            type_opts.len,
-        );
-        for (type_opts) |maybe_type| {
-            try list.append(self.alloc, maybe_type orelse "any");
-        }
-        return try list.toOwnedSlice(self.alloc);
     }
 
     fn buildTypesListFromInfo(
