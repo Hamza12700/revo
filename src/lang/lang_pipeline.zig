@@ -56,10 +56,16 @@ pub const LowerOptions = struct {
     source: ?Source = null,
     test_mode: bool = false,
 };
+pub const RunMode = enum {
+    script,
+    project,
+};
+
 pub const BuildOptions = struct {
     include_default_macros: bool = true,
     install_debug_info: bool = true,
     test_mode: bool = false,
+    mode: RunMode = .script,
 };
 
 pub const Parsed = struct {

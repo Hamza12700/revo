@@ -48,6 +48,7 @@ pub const ExpandFailure = pipeline.ExpandFailure;
 pub const ParseOptions = pipeline.ParseOptions;
 pub const LowerOptions = pipeline.LowerOptions;
 pub const BuildOptions = pipeline.BuildOptions;
+pub const RunMode = pipeline.RunMode;
 pub const ParseResult = pipeline.ParseResult;
 pub const ExpandResult = pipeline.ExpandResult;
 pub const ExpandWithVmResult = pipeline.ExpandWithVmResult;

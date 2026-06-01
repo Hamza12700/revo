@@ -19,6 +19,8 @@ const FileEntry = struct {
     version: u32,
     name: []u8,
     text: []u8,
+    mode: lang.RunMode = .script,
+    project_root: []u8 = &.{},
 };
 
 const CacheEntry = struct {
@@ -175,17 +177,26 @@ pub const Workspace = struct {
         const id = self.next_file_id;
         self.next_file_id += 1;
 
+        const mode = detectRunMode(self.alloc, name) catch .script;
+        const project_root: []u8 = if (mode == .project) blk: {
+            const dir = std.fs.path.dirname(name) orelse "";
+            break :blk self.alloc.dupe(u8, dir) catch "";
+        } else @as([]u8, &.{});
+
         try self.files.append(self.alloc, .{
             .id = id,
             .version = 1,
             .name = name_copy,
             .text = text_copy,
+            .mode = mode,
+            .project_root = project_root,
         });
         stored = true;
         errdefer {
             const removed = self.files.pop().?;
             self.alloc.free(removed.name);
             self.alloc.free(removed.text);
+            if (removed.project_root.len > 0) self.alloc.free(removed.project_root);
         }
         const index = self.files.items.len - 1;
 
@@ -222,6 +233,7 @@ pub const Workspace = struct {
         _ = self.file_index.remove(id);
         self.alloc.free(removed.name);
         self.alloc.free(removed.text);
+        if (removed.project_root.len > 0) self.alloc.free(removed.project_root);
         if (index < self.files.items.len) {
             const moved = self.files.items[index];
             self.file_index.put(moved.id, index) catch {};
@@ -648,10 +660,20 @@ pub const Workspace = struct {
         self: *Workspace,
         source_name: []const u8,
         raw_path: []const u8,
+        mode: lang.RunMode,
+        project_root: []const u8,
     ) ?FileId {
-        const resolved = self.resolveImportPath(source_name, raw_path) orelse return null;
-        defer self.alloc.free(resolved);
-        return self.file_names.get(resolved);
+        if (self.resolveImportPath(source_name, raw_path)) |resolved| {
+            defer self.alloc.free(resolved);
+            if (self.file_names.get(resolved)) |id| return id;
+        }
+        if (mode == .project and project_root.len > 0) {
+            if (self.resolveImportPath(project_root, raw_path)) |resolved| {
+                defer self.alloc.free(resolved);
+                if (self.file_names.get(resolved)) |id| return id;
+            }
+        }
+        return null;
     }
 
     fn resolveImportPath(
@@ -861,10 +883,13 @@ pub const Workspace = struct {
     fn collectDepsFromParsed(self: *Workspace, snap: Snapshot, root: *lang.Node) ![]FileId {
         var out = try std.ArrayList(FileId).initCapacity(self.alloc, 4);
         errdefer out.deinit(self.alloc);
+        const file_entry = self.entryPtr(snap.id) catch return out.toOwnedSlice(self.alloc);
         var visitor = ImportVisitor{
             .ws = self,
             .out = &out,
             .base = snap.name,
+            .mode = file_entry.mode,
+            .project_root = file_entry.project_root,
             .failed = false,
         };
         visitor.visit(root);
@@ -951,7 +976,8 @@ pub const Workspace = struct {
 fn sameOpts(a: lang.BuildOptions, b: lang.BuildOptions) bool {
     return a.include_default_macros == b.include_default_macros and
         a.install_debug_info == b.install_debug_info and
-        a.test_mode == b.test_mode;
+        a.test_mode == b.test_mode and
+        a.mode == b.mode;
 }
 
 fn copyArtifact(alloc: std.mem.Allocator, artifact: lang.Artifact) !lang.Artifact {
@@ -1110,6 +1136,14 @@ const SymbolVisitor = struct {
     }
 };
 
+fn detectRunMode(alloc: std.mem.Allocator, name: []const u8) !lang.RunMode {
+    _ = alloc;
+    _ = name;
+    // TODO: walk and look for lib.json / exe.json
+    //       needs an Io somewhere
+    return .script;
+}
+
 fn containsId(items: []const FileId, id: FileId) bool {
     for (items) |item|
         if (item == id) return true;
@@ -1121,6 +1155,8 @@ const ImportVisitor = struct {
     ws: *Workspace,
     out: *std.ArrayList(FileId),
     base: []const u8,
+    mode: lang.RunMode,
+    project_root: []const u8,
     failed: bool,
 
     pub fn visit(self: *@This(), node: *const lang.Node) void {
@@ -1132,7 +1168,7 @@ const ImportVisitor = struct {
                 else => "",
             };
             if (raw.len != 0) {
-                if (self.ws.resolveOpenImport(self.base, raw)) |id| {
+                if (self.ws.resolveOpenImport(self.base, raw, self.mode, self.project_root)) |id| {
                     if (!containsId(self.out.items, id)) {
                         self.out.append(self.ws.alloc, id) catch {
                             self.failed = true;
