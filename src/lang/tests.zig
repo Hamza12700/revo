@@ -618,14 +618,14 @@ test "unwrap panics on bullshit" {
 
 test "zero-arg macro expands on identifier use" {
     try t.top_number(
-        \\const answer! = macro `` `42`
+        \\macro answer! `` `42`
         \\answer!
     , 42);
 }
 
 test "unary macro expands in call position" {
     try t.top_number(
-        \\ const id! = macro `%e:expr` `%e`
+        \\ macro id! `%e:expr` `%e`
         \\ id!(42)
     , 42);
 }
@@ -651,12 +651,12 @@ test "unary macro expands in call position" {
 
 test "macro system capabilities and limitations" {
     try t.top_number(
-        \\ const id! = macro `%x:expr` `%x`
+        \\ macro id! `%x:expr` `%x`
         \\ id!(42)
     , 42);
 
     try t.top_number(
-        \\ const count_args! = macro `(%fmt:str %ARGS(, %arg:expr)*)` `3`
+        \\ macro count_args! `(%fmt:str %ARGS(, %arg:expr)*)` `3`
         \\ count_args!("format", 1, 2, 3)
     , 3);
 }
@@ -664,14 +664,14 @@ test "macro system capabilities and limitations" {
 // basic simple captures
 test "unary macro - single expression capture" {
     try t.top_number(
-        \\ const id! = macro `%x:expr` `%x`
+        \\ macro id! `%x:expr` `%x`
         \\ id!(42)
     , 42);
 }
 
 test "binary structure macro - multiple captures with literals" {
     try t.top_number(
-        \\ const combine! = macro `(%left:expr %right:expr)` `%left + %right`
+        \\ macro combine! `(%left:expr %right:expr)` `%left + %right`
         \\ combine!(20, 22)
     , 42);
 }
@@ -679,7 +679,7 @@ test "binary structure macro - multiple captures with literals" {
 // type-consrtained captures
 test "identifier capture - creates bindings" {
     try t.top_number(
-        \\ const const! = macro `%name:ident = %val:expr` `const %name = %val`
+        \\ macro const! `%name:ident = %val:expr` `const %name = %val`
         \\ const!(answer = 42)
         \\ answer
     , 42);
@@ -687,14 +687,14 @@ test "identifier capture - creates bindings" {
 
 test "string literal capture - constrains to string" {
     try t.top_type(
-        \\ const get_format! = macro `(%fmt:str %rest:expr)` `%fmt`
+        \\ macro get_format! `(%fmt:str %rest:expr)` `%fmt`
         \\ get_format!("hello", 123)
     , .string);
 }
 
 test "number literal capture - constrains to number" {
     try t.top_number(
-        \\ const repeat_val! = macro `(%n:number %body:expr)` `%n`
+        \\ macro repeat_val! `(%n:number %body:expr)` `%n`
         \\ repeat_val!(42, (1 + 2))
     , 42);
 }
@@ -702,28 +702,28 @@ test "number literal capture - constrains to number" {
 // repetition groups
 test "zero-or-more repetition - captures multiple items" {
     try t.top_nil(
-        \\ const do_all! = macro `(%ITEMS(%item:expr)*)` `do %ITEMS(%item) :nil end`
+        \\ macro do_all! `(%ITEMS(%item:expr)*)` `do %ITEMS(%item) :nil end`
         \\ do_all!(1, 2, 3)
     );
 }
 
 test "one-or-more repetition - at least one required" {
     try t.top_number(
-        \\ const sum_all! = macro `(%first:expr %REST(%item:expr)*)` `%first %REST(+ %item)`
+        \\ macro sum_all! `(%first:expr %REST(%item:expr)*)` `%first %REST(+ %item)`
         \\ sum_all!(10, 15, 17)
     , 42);
 }
 
 test "optional group - zero or one occurrence" {
     try t.top_number(
-        \\ const maybe_print! = macro `(%val:expr %MSG(%msg:str)?)` `%val`
+        \\ macro maybe_print! `(%val:expr %MSG(%msg:str)?)` `%val`
         \\ maybe_print!(42, "hello")
     , 42);
 }
 
 test "comma-separated repetition - literal separators" {
     try t.top_number(
-        \\ const tuple_fst! = macro `(%first:expr %REST(%item:expr)*)` `%first`
+        \\ macro tuple_fst! `(%first:expr %REST(%item:expr)*)` `%first`
         \\ tuple_fst!(10, 15, 17)
     , 10);
 }
@@ -731,7 +731,7 @@ test "comma-separated repetition - literal separators" {
 // complex combinations
 test "if-elif-else chain multiple groups with quantifiers" {
     try t.top_number(
-        \\ const choose! = macro
+        \\ macro choose!
         \\     `(%head:number %ITEMS(%item:number)* %MSG(%msg:str)?)`
         \\     `do %head %ITEMS(+ %item) end`
         \\
@@ -741,7 +741,7 @@ test "if-elif-else chain multiple groups with quantifiers" {
 
 test "complex fn def captures, repetition, optional" {
     try t.top_number(
-        \\ const sum_from! = macro `(%start:number %ITEMS(%item:expr)+)`
+        \\ macro sum_from! `(%start:number %ITEMS(%item:expr)+)`
         \\     `do %start %ITEMS(+ %item) end`
         \\
         \\ sum_from!(10, 15, 17)
@@ -751,14 +751,14 @@ test "complex fn def captures, repetition, optional" {
 // kw-based control flow
 test "negative conditional" {
     try t.top_type(
-        \\ const unless! = macro `(%cond:expr %body:expr)` `if %cond nil else %body`
+        \\ macro unless! `(%cond:expr %body:expr)` `if %cond nil else %body`
         \\ unless!(5 < 0, :positive)
     , .atom);
 }
 
 test "custom keyword structure - keywords at multiple positions" {
     try t.top_number(
-        \\ const repeat_until! = macro `(%body:expr %cond:expr)` `%body`
+        \\ macro repeat_until! `(%body:expr %cond:expr)` `%body`
         \\ repeat_until!(10 + 32, 5 == 0)
     , 42);
 }
@@ -2352,7 +2352,7 @@ test "channel select w/ multiple waiters" {
 
 test "macro inner binding invisible outside" {
     try t.expectRuntimeError(
-        \\ const mac! = macro `(%x:expr)` `let hidden = 99 :%x`
+        \\ macro mac! `(%x:expr)` `let hidden = 99 :%x`
         \\ mac!(42)
         \\ hidden
     , .UndefinedVariable);

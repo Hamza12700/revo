@@ -71,6 +71,11 @@ pub fn isNumeric(T: TypeInfo) bool {
 
 pub fn canCoerce(from: TypeInfo, to: TypeInfo) bool {
     if (from.eql(to) or to == .any or from == .any) return true;
+    // :true and :false are bool
+    if (to == .bool and from == .atom) {
+        const name = atomPayload(from.atom);
+        return std.mem.eql(u8, name, "true") or std.mem.eql(u8, name, "false");
+    }
     if (to == .@"union") {
         // fast-path for atom literals vs atom-only variants
         if (from == .atom) {

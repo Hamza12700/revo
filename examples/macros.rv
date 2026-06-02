@@ -1,7 +1,7 @@
-const unless! = macro `(%cond:expr %body:expr)` `if %cond :nil else %body`
+macro unless! `(%cond:expr %body:expr)` `if %cond :nil else %body`
 unless!(1 == 2, print("ok")) # ok
 
-const sum_all! = macro `(%first:expr %REST(%item:expr)*)`
+macro sum_all! `(%first:expr %REST(%item:expr)*)`
     `%first %REST(+ %item)` # syntax is subject to change
 
 print(sum_all!(1, 2, 3, 4)) # 10

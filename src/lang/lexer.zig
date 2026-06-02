@@ -739,11 +739,9 @@ test "lexes calls with sigils and hash literals" {
 }
 
 test "lexes macros and pipe-forward" {
-    try testing.expectTokens("const call_it = macro `` `@foo(0)` |> print", &.{
-        .{ .t = .kw_const, .v = "const" },
-        .{ .t = .ident, .v = "call_it" },
-        .{ .t = .assign, .v = "=" },
+    try testing.expectTokens("macro call_it! `` `@foo(0)` |> print", &.{
         .{ .t = .kw_macro, .v = "macro" },
+        .{ .t = .ident, .v = "call_it!" },
         .{ .t = .backtick_string, .v = "" },
         .{ .t = .backtick_string, .v = "@foo(0)" },
         .{ .t = .pipe_forward, .v = "|>" },
@@ -930,15 +928,13 @@ test "lexes test keyword" {
 test "lexes macro literals and pipe-forward" {
     try t.expectTypes(
         \\do
-        \\    const dup = macro `` `@peek(0)`
+        \\    macro dup! `` `@peek(0)`
         \\    |> print
         \\end
     , &.{
         .kw_do,
-        .kw_const,
-        .ident,
-        .assign,
         .kw_macro,
+        .ident,
         .backtick_string,
         .backtick_string,
         .pipe_forward,

@@ -337,8 +337,8 @@ fn macros() do
   print("\nmacros")
 
   # macro defines a syntax transformation at compile time
-  const double! = macro `(%x:expr)` `%x * 2`
-  const twice! = macro `(%x:expr %y:expr)` `%x + %y`
+  macro double! `(%x:expr)` `%x * 2`
+  macro twice! `(%x:expr %y:expr)` `%x + %y`
 
   # macro expands to the transformed code
   print(double!(21))

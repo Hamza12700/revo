@@ -633,7 +633,7 @@ syntax, which lets you extend the language without any runtime cost:
 ## %n:ident  - capture an identifier
 ## %s:str    - capture a string literal
 
-const unless! = macro `(%cond:expr %body:expr)` `if %cond :nil else %body`
+macro unless! `(%cond:expr %body:expr)` `if %cond :nil else %body`
 unless!(5 < 0, :positive) # :positive
 
 ## repetition groups
@@ -641,7 +641,7 @@ unless!(5 < 0, :positive) # :positive
 ## %GROUP(...)+ - one or more
 ## %GROUP(...)? - optional
 
-const sum_all! = macro `(%first:expr %REST(%item:expr)*)` `%first %REST(+ %item)`
+macro sum_all! `(%first:expr %REST(%item:expr)*)` `%first %REST(+ %item)`
 sum_all!(10, 15, 17) # 42
 ```
 

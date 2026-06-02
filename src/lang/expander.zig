@@ -89,6 +89,11 @@ fn expandInEnv(allocator: std.mem.Allocator, expr: *Node, env: *MacroEnv) Expand
                 .block = try ast.walkSliceWith(allocator, items, ExpandCtx, .{ .env = &child }),
             });
         },
+        .macro_expr => |m| blk: {
+            const def = try parseMacroDef(allocator, m.pattern, m.template);
+            try env.map.put(m.name, def);
+            break :blk ast.allocNode(allocator, expr.span, .nil);
+        },
         .binding => |binding| expandCon(allocator, expr.span, binding, env),
         .decl => |d| ast.allocNode(allocator, expr.span, .{ .decl = .{ .inner = try expandInEnv(allocator, d.inner, env), .kind = d.kind } }),
         .call => |call| maybeExpandCall(allocator, expr.span, call.callee, call.args, call.implicit_self, env),
@@ -98,13 +103,6 @@ fn expandInEnv(allocator: std.mem.Allocator, expr: *Node, env: *MacroEnv) Expand
 }
 
 fn expandCon(allocator: std.mem.Allocator, span: Span, binding: ast.Binding, env: *MacroEnv) ExpandError!*Node {
-    if (binding.target.expr == .ident and binding.value.expr == .macro_expr) {
-        const name = binding.target.expr.ident;
-        if (!std.mem.endsWith(u8, name, "!")) return error.InvalidMacroName;
-        const def = try parseMacroDef(allocator, binding.value.expr.macro_expr.pattern, binding.value.expr.macro_expr.template);
-        try env.map.put(name, def);
-        return ast.allocNode(allocator, span, .nil);
-    }
     return ast.allocNode(allocator, span, .{ .binding = .{
         .target = try expandInEnv(allocator, binding.target, env),
         .type_name = binding.type_name,
@@ -790,8 +788,8 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const dup! = macro `` `saved`
-            \\ const try! = macro `%e:expr` `match %e | x when is_error(x) => sys.panic(x) | x => x`
+            \\ macro dup! `` `saved`
+            \\ macro try! `%e:expr` `match %e | x when is_error(x) => sys.panic(x) | x => x`
             \\ 41
             \\ dup!
             \\ try!(1)
@@ -810,7 +808,7 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const println! = macro `(%fmt:str %ARGS(, %arg:expr)*)` `(print(fmt(%fmt %ARGS(, %arg))))`
+            \\ macro println! `(%fmt:str %ARGS(, %arg:expr)*)` `(print(fmt(%fmt %ARGS(, %arg))))`
             \\ "yo"
             \\ println!("%v %v", 1, 2)
         ));
@@ -822,7 +820,7 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const add! = macro `%a:expr + %b:expr` `(%a + %b)`
+            \\ macro add! `%a:expr + %b:expr` `(%a + %b)`
             \\ add!(1, 2)
         ));
         try doesMatch(expanded, "(block nil (+ 1 2))");
@@ -833,7 +831,7 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const sum! = macro `%first:expr %REST(%item:expr)*` `%first %REST(+ %item)`
+            \\ macro sum! `%first:expr %REST(%item:expr)*` `%first %REST(+ %item)`
             \\ sum!(1, 2, 3)
         ));
         try doesMatch(expanded, "(block nil (+ (+ 1 2) 3))");
@@ -844,7 +842,7 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const unless! = macro `(%cond:expr %body:expr)` `if %cond nil else %body`
+            \\ macro unless! `(%cond:expr %body:expr)` `if %cond nil else %body`
             \\ unless!(:false, 42)
         ));
         try doesMatch(expanded, "(block nil (if :false nil 42))");
@@ -855,8 +853,8 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const ok! = macro `(%what:expr)` `(:ok, %what)`
-            \\ const err! = macro `(%what:expr)` `(:err, %what)`
+            \\ macro ok! `(%what:expr)` `(:ok, %what)`
+            \\ macro err! `(%what:expr)` `(:err, %what)`
             \\ ok!(42)
             \\ err!("fail")
         ));
@@ -868,7 +866,7 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const all_true! = macro `(%ITEMS(%item:expr)*)` `do :true %ITEMS(and (%item and :true)) end`
+            \\ macro all_true! `(%ITEMS(%item:expr)*)` `do :true %ITEMS(and (%item and :true)) end`
             \\ all_true!(1, :true)
         ));
         try doesMatch(expanded, "(block nil (block (and (and :true (and 1 :true)) (and :true :true))))");
@@ -879,9 +877,9 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const double! = macro `%x:expr` `(%x * 2)`
+            \\ macro double! `%x:expr` `(%x * 2)`
             \\ do
-            \\   const triple! = macro `%x:expr` `(%x * 3)`
+            \\   macro triple! `%x:expr` `(%x * 3)`
             \\   double!(5)
             \\   triple!(5)
             \\ end
@@ -894,8 +892,8 @@ pub const testing = struct {
         defer arena.deinit();
 
         const expanded = try expandExpr(arena.allocator(), try pipeline.parseSource(arena.allocator(),
-            \\ const id! = macro `%x:ident` `%x`
-            \\ const num! = macro `%x:number` `%x`
+            \\ macro id! `%x:ident` `%x`
+            \\ macro num! `%x:number` `%x`
             \\ id!(foo)
             \\ num!(42)
         ));

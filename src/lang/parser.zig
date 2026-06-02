@@ -838,11 +838,14 @@ const Parser = struct {
         );
     }
 
-    /// macro `pattern` `template`
+    /// macro name! `pattern` `template`
     fn parseMacro(self: *Parser, start: Token) anyerror!*Node {
+        const name = try self.expect(.ident);
+        if (!std.mem.endsWith(u8, name.text, "!")) return error.InvalidMacroName;
         const pattern = try self.expect(.backtick_string);
         const template = try self.expect(.backtick_string);
         return self.allocExpr(Span.merge(start.span(), template.span()), .{ .macro_expr = .{
+            .name = name.text,
             .pattern = pattern.text,
             .template = template.text,
         } });

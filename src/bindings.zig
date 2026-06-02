@@ -137,7 +137,6 @@ pub fn data(allocator: Allocator) !std.ArrayList(u8) {
         \\  const char *name;
         \\  RevoFn fn;
         \\} RevoBinding;
-
         \\
     );
 

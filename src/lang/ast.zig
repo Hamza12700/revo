@@ -210,7 +210,7 @@ pub const Expr = union(enum) {
         // inclusive: bool = true,
     },
     import_expr: *Node,
-    macro_expr: struct { pattern: []const u8, template: []const u8 },
+    macro_expr: struct { name: []const u8, pattern: []const u8, template: []const u8 },
     test_block: struct { name: []const u8, body: *Node, skip: bool = false },
     test_suite: struct { name: []const u8, body: *Node },
     block: []*Node,
@@ -262,7 +262,7 @@ pub const Node = struct {
             .hash => |h| try writer.print(":{s}", .{h}),
             .nil => try writer.writeAll("nil"),
             .ident => |name| try writer.writeAll(name),
-            .macro_expr => |m| try writer.print("(macro `{s}` `{s}`)", .{ m.pattern, m.template }),
+            .macro_expr => |m| try writer.print("(macro {s} `{s}` `{s}`)", .{ m.name, m.pattern, m.template }),
 
             .decl => |d| try d.inner.printAt(writer, depth),
 
