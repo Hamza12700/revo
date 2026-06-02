@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
     //
     // git submodule update for all Doptimize!=Debug
     //
-    const maybe_git_submod: ?*std.Build.Step = if (optimize != .Debug) blk: {
+    const maybe_git_submod: ?*std.Build.Step = blk: {
         const stamp = ".zig-cache/submodules-updated";
         const cmd = b.addSystemCommand(&.{
             "sh", "-c",
@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
             ),
         });
         break :blk &cmd.step;
-    } else null;
+    };
 
     //
     // main exe

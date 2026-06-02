@@ -158,13 +158,16 @@ async def test_signature_help(client: LanguageClient):
     # documentation may be a string or a {string: ..., markup_content: ...} object
     doc_val = sig.documentation
     if isinstance(doc_val, dict):
-        raw = doc_val.get("string") or doc_val.get("markup_content", {}).get("value", "")
+        raw = doc_val.get("string") or doc_val.get(
+            "markup_content", {}).get("value", "")
         assert "greets a person" in raw, f"expected doc text, got {doc_val}"
     elif isinstance(doc_val, str):
-        assert "greets a person" in doc_val, f"expected doc text, got {doc_val}"
+        assert "greets a person" in doc_val, f"expected doc text, got {
+            doc_val}"
     else:
         # could be bytes/list, check raw
-        raw = "".join(chr(b) if isinstance(b, int) else str(b) for b in doc_val)
+        raw = "".join(chr(b) if isinstance(b, int) else str(b)
+                      for b in doc_val)
         assert "greets a person" in raw, f"expected doc text, got {raw}"
 
 

@@ -58,7 +58,7 @@ const splash_texts = [_][]const u8{
             break :blk "arm is better";
         } else if (std.mem.count(u8, cpu, "apple") > 0) {
             break :blk "how's it feel to share ram with vram";
-        }
+        } else break :blk "woah";
     },
 };
 
