@@ -1,0 +1,8 @@
+const ex = import("examples/c/extension.so")
+
+print("echo:", ex.echo("hello"))
+print("strlen:", ex.strlen("hello"))
+print("add:", ex.add(3, 4))
+print("typ(5):", ex.typ(5))
+print("typ(\"hi\"):", ex.typ("hi"))
+print("regex:", ex.regex("^h", "hello"))

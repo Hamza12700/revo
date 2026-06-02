@@ -63,6 +63,14 @@ pub export fn revo_intern(vm: *anyopaque, ptr_val: u64, len: usize) callconv(.c)
     return @intCast(id);
 }
 
+pub export fn revo_intern_atom(vm: *anyopaque, ptr_val: u64, len: usize) callconv(.c) u64 {
+    const vm_typed: *VM_mod.VM = @ptrCast(@alignCast(vm));
+    const ptr: [*]u8 = @ptrFromInt(ptr_val);
+    const slice = ptr[0..len];
+    const id = vm_typed.internAtom(slice) catch return 0;
+    return @intCast(id);
+}
+
 pub export fn revo_getglobal(vm: *anyopaque, name_ptr: u64, name_len: usize) callconv(.c) CRevoData {
     const vm_typed: *VM_mod.VM = @ptrCast(@alignCast(vm));
     const ptr: [*]u8 = @ptrFromInt(name_ptr);
@@ -133,6 +141,18 @@ pub export fn revo_table_set(vm: *anyopaque, table_id: u64, key: CRevoData, valu
 
     const tbl = vm_typed.tables.get(tid) catch return;
     tbl.put(tid, vm_typed, key_data, value_data) catch {};
+}
+
+pub export fn revo_string_data(vm: *anyopaque, id: u64) callconv(.c) ?[*]const u8 {
+    const v: *VM_mod.VM = @ptrCast(@alignCast(vm));
+    const slice = v.strings.get(@intCast(id)) catch return null;
+    return slice.ptr;
+}
+
+pub export fn revo_string_length(vm: *anyopaque, id: u64) callconv(.c) usize {
+    const v: *VM_mod.VM = @ptrCast(@alignCast(vm));
+    const slice = v.strings.get(@intCast(id)) catch return 0;
+    return slice.len;
 }
 
 pub fn loadC(vm: *VM_mod.VM, lib_path: []const u8) ![]functions.CFunction {

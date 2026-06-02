@@ -784,7 +784,7 @@ pub fn import(args: []const Data, vm: *VM) !NativeResult {
 
     const resolved_path = try resolveImportPath(raw_path_s, vm.module_dir, vm);
     defer vm.runtime.alloc.free(resolved_path);
-    if (std.mem.endsWith(u8, resolved_path, ".so")) {
+    if (std.mem.endsWith(u8, resolved_path, ".so") or std.mem.endsWith(u8, resolved_path, ".dylib")) {
         const mods = try revo.ffi.loadC(vm, resolved_path);
         defer vm.runtime.alloc.free(mods);
         const t_id = try vm.tables.create();

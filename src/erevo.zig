@@ -24,7 +24,6 @@ pub const ErevoData = extern struct {
 const VM = struct {
     alloc: std.mem.Allocator,
     io: std.Io.Threaded,
-    runtime: revo.Runtime,
     last_error: ?[:0]u8 = null,
 };
 
@@ -35,8 +34,12 @@ const Program = struct {
     artifact: revo.lang.Artifact,
 };
 
-fn vmOf(vm: ?*ErevoVM) ?*VM {
+fn wrappedVm(vm: ?*ErevoVM) ?*revo.VM {
     return if (vm) |p| @ptrCast(@alignCast(p)) else null;
+}
+
+fn vmOf(inner: *revo.VM) *VM {
+    return @ptrCast(@alignCast(inner.c_data.?));
 }
 
 fn programOf(program: ?*ErevoProgram) ?*Program {
@@ -60,20 +63,23 @@ fn setErrorFmt(vm: *VM, comptime fmt: []const u8, args: anytype) void {
     setError(vm, message);
 }
 
-fn makeVm(alloc: std.mem.Allocator) !*VM {
-    const vm = try alloc.create(VM);
-    errdefer alloc.destroy(vm);
-
+fn makeVm(alloc: std.mem.Allocator) !*revo.VM {
     var io = std.Io.Threaded.init(alloc, .{});
     errdefer io.deinit();
 
-    const runtime = try revo.Runtime.init(alloc, io.io(), &.{});
-    vm.* = .{
+    var runtime = try revo.Runtime.init(alloc, io.io(), &.{});
+    errdefer runtime.deinit();
+
+    const inner = runtime.vm orelse return error.NoVm;
+    const wrap = try alloc.create(VM);
+    errdefer alloc.destroy(wrap);
+
+    wrap.* = .{
         .alloc = alloc,
         .io = io,
-        .runtime = runtime,
     };
-    return vm;
+    inner.c_data = @ptrCast(wrap);
+    return inner;
 }
 
 fn freeProgram(program: *Program) void {
@@ -103,61 +109,53 @@ fn makeProgram(vm: *VM, name: []const u8, source: []const u8, artifact: revo.lan
     return program;
 }
 
-fn compileProgram(vm: *VM, name: []const u8, source: []const u8) ?*Program {
-    clearError(vm);
-    const runtime_vm = vm.runtime.vm orelse {
-        setError(vm, "vm missing");
-        return null;
-    };
+fn compileProgram(inner: *revo.VM, name: []const u8, source: []const u8) ?*Program {
+    const self = vmOf(inner);
+    clearError(self);
 
-    const result = revo.lang.build(runtime_vm, .{ .name = name, .text = source }, .{}) catch |err| {
-        setErrorFmt(vm, "{}", .{err});
+    const result = revo.lang.build(inner, .{ .name = name, .text = source }, .{}) catch |err| {
+        setErrorFmt(self, "{}", .{err});
         return null;
     };
 
     return switch (result) {
-        .ok => |artifact| makeProgram(vm, name, source, artifact) catch |err| {
-            setErrorFmt(vm, "{}", .{err});
+        .ok => |artifact| makeProgram(self, name, source, artifact) catch |err| {
+            setErrorFmt(self, "{}", .{err});
             return null;
         },
         .err => |failure| blk: {
-            var buf = std.Io.Writer.Allocating.init(vm.alloc);
+            var buf = std.Io.Writer.Allocating.init(self.alloc);
             defer buf.deinit();
-            revo.lang.renderError(vm.alloc, &buf.writer, .{ .name = name, .text = source }, failure) catch {
-                setError(vm, "compile error");
-                revo.lang.deinitError(vm.alloc, failure);
-                vm.runtime.resetDiagArena();
+            revo.lang.renderError(self.alloc, &buf.writer, .{ .name = name, .text = source }, failure) catch {
+                setError(self, "compile error");
+                inner.runtime.resetDiagArena();
                 break :blk null;
             };
-            setError(vm, buf.written());
-            revo.lang.deinitError(vm.alloc, failure);
-            vm.runtime.resetDiagArena();
+            setError(self, buf.written());
+            inner.runtime.resetDiagArena();
             break :blk null;
         },
     };
 }
 
-fn runProgram(vm: *VM, program: *Program, out_value: ?*ErevoData) bool {
-    clearError(vm);
-    const runtime_vm = vm.runtime.vm orelse {
-        setError(vm, "vm missing");
+fn runProgram(inner: *revo.VM, program: *Program, out_value: ?*ErevoData) bool {
+    const self = vmOf(inner);
+    clearError(self);
+
+    inner.setProgramDebugInfo(program.artifact.spans, program.source, program.name) catch |err| {
+        setErrorFmt(self, "{}", .{err});
         return false;
     };
 
-    runtime_vm.setProgramDebugInfo(program.artifact.spans, program.source, program.name) catch |err| {
-        setErrorFmt(vm, "{}", .{err});
-        return false;
-    };
-
-    const result = revo.module.runCompiledModuleReport(runtime_vm, program.name, program.artifact.instructions) catch |err| {
-        setErrorFmt(vm, "{}", .{err});
+    const result = revo.module.runCompiledModuleReport(inner, program.name, program.artifact.instructions) catch |err| {
+        setErrorFmt(self, "{}", .{err});
         return false;
     };
 
     return switch (result) {
         .ok => blk: {
             if (out_value) |out| {
-                const cr = runtime_vm.currentResult();
+                const cr = inner.currentResult();
                 const tag = @intFromEnum(cr.tag());
                 const value = if (cr.asNum()) |n|
                     @as(u64, @bitCast(n))
@@ -176,15 +174,15 @@ fn runProgram(vm: *VM, program: *Program, out_value: ?*ErevoData) bool {
             break :blk true;
         },
         .err => |failure| blk: {
-            var buf = std.Io.Writer.Allocating.init(vm.alloc);
+            var buf = std.Io.Writer.Allocating.init(self.alloc);
             defer buf.deinit();
-            failure.render(vm.alloc, &buf.writer, program.source) catch {
-                setError(vm, "runtime error");
-                vm.runtime.resetDiagArena();
+            failure.render(self.alloc, &buf.writer, program.source) catch {
+                setError(self, "runtime error");
+                inner.runtime.resetDiagArena();
                 break :blk false;
             };
-            setError(vm, buf.written());
-            vm.runtime.resetDiagArena();
+            setError(self, buf.written());
+            inner.runtime.resetDiagArena();
             break :blk false;
         },
     };
@@ -195,23 +193,25 @@ pub export fn erevo_vm_create() callconv(.c) ?*ErevoVM {
 }
 
 pub export fn erevo_vm_destroy(vm: ?*ErevoVM) callconv(.c) void {
-    const self = vmOf(vm) orelse return;
+    const inner = wrappedVm(vm) orelse return;
+    const self = vmOf(inner);
     clearError(self);
-    self.runtime.deinit();
     self.io.deinit();
+    inner.runtime.deinit();
     self.alloc.destroy(self);
 }
 
 pub export fn erevo_vm_last_error(vm: ?*ErevoVM) callconv(.c) [*:0]const u8 {
-    const self = vmOf(vm) orelse return "";
+    const inner = wrappedVm(vm) orelse return "";
+    const self = vmOf(inner);
     return if (self.last_error) |msg| msg.ptr else "";
 }
 
 pub export fn erevo_compile(vm: ?*ErevoVM, name: [*:0]const u8, source: [*:0]const u8) callconv(.c) ?*ErevoProgram {
-    const self = vmOf(vm) orelse return null;
+    const inner = wrappedVm(vm) orelse return null;
     const name_slice = std.mem.span(name);
     const source_slice = std.mem.span(source);
-    return @ptrCast(compileProgram(self, name_slice, source_slice) orelse return null);
+    return @ptrCast(compileProgram(inner, name_slice, source_slice) orelse return null);
 }
 
 pub export fn erevo_program_destroy(program: ?*ErevoProgram) callconv(.c) void {
@@ -220,16 +220,16 @@ pub export fn erevo_program_destroy(program: ?*ErevoProgram) callconv(.c) void {
 }
 
 pub export fn erevo_run(vm: ?*ErevoVM, program: ?*ErevoProgram, out_value: ?*ErevoData) callconv(.c) bool {
-    const self = vmOf(vm) orelse return false;
+    const inner = wrappedVm(vm) orelse return false;
     const compiled = programOf(program) orelse return false;
-    return runProgram(self, compiled, out_value);
+    return runProgram(inner, compiled, out_value);
 }
 
 pub export fn erevo_eval(vm: ?*ErevoVM, name: [*:0]const u8, source: [*:0]const u8, out_value: ?*ErevoData) callconv(.c) bool {
-    const self = vmOf(vm) orelse return false;
+    const inner = wrappedVm(vm) orelse return false;
     const name_slice = std.mem.span(name);
     const source_slice = std.mem.span(source);
-    const program = compileProgram(self, name_slice, source_slice) orelse return false;
+    const program = compileProgram(inner, name_slice, source_slice) orelse return false;
     defer freeProgram(program);
-    return runProgram(self, program, out_value);
+    return runProgram(inner, program, out_value);
 }

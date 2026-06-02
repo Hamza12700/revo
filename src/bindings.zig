@@ -26,6 +26,7 @@ const TRANSLATOR = [_]TypeTranslation{
     .{ .zig = "?*anyopaque", .c = "void*" },
     .{ .zig = "[*:0]const u8", .c = "const char*" },
     .{ .zig = "[*]const u8", .c = "const char*" },
+    .{ .zig = "?[*]const u8", .c = "const char*" },
     .{ .zig = "?*ErevoVM", .c = "ErevoVM*" },
     .{ .zig = "?*ErevoProgram", .c = "ErevoProgram*" },
     .{ .zig = "?*ErevoData", .c = "ErevoData*" },
@@ -116,8 +117,17 @@ pub fn data(allocator: Allocator) !std.ArrayList(u8) {
         \\// helpers for often-used values
         \\#define revo_nil() (RevoData){.tag = revo_atom, .value = ra_nil}
         \\#define revo_bool(v) (RevoData){.tag = revo_atom, .value = v ? ra_true : ra_false}
-        \\#define revo_ok() (RevoData){.tag = revo_atom, .value = ra_ok}
         \\#define R_STRING(id) (RevoData){.tag = revo_string, .value = id}
+        \\static inline RevoData revo_num(double n) { RevoData d; d.tag = revo_number; union { uint64_t u; double f; } u = { .f = n }; d.value = u.u; return d; }
+        \\static inline RevoData revo_atom_val(uint64_t id) { RevoData d; d.tag = revo_atom; d.value = id; return d; }
+        \\static inline double revo_num_value(RevoData d) { union { uint64_t u; double f; } u = { .u = d.value }; return u.f; }
+        \\static inline uint64_t revo_string_id(RevoData d) { return d.value; }
+        \\static inline int revo_is_nil(RevoData d) { return d.tag == revo_atom && d.value == ra_nil; }
+        \\static inline int revo_is_number(RevoData d) { return d.tag == revo_number; }
+        \\static inline int revo_is_string(RevoData d) { return d.tag == revo_string; }
+        \\static inline int revo_is_atom(RevoData d) { return d.tag == revo_atom; }
+        \\static inline int revo_is_table(RevoData d) { return d.tag == revo_table; }
+        \\static inline int revo_is_bool(RevoData d) { return d.tag == revo_atom && (d.value == ra_true || d.value == ra_false); }
         \\
         \\// function ptr type
         \\typedef void (*RevoFn)(void *vm, size_t argc, RevoData *argv, RevoData *out_result);
@@ -127,17 +137,15 @@ pub fn data(allocator: Allocator) !std.ArrayList(u8) {
         \\  const char *name;
         \\  RevoFn fn;
         \\} RevoBinding;
-        \\#define REVO_BINDINGS_END {NULL, NULL}
-        \\#define R_EXPORT(...) __attribute__((visibility("default"))) const RevoBinding revo_bindings[] = {__VA_ARGS__, {NULL, NULL}};
-        \\#define R_SIG(fname) void fname(void *vm, size_t argc, RevoData *argv, RevoData *out_result)
-        \\
+
         \\
     );
 
     try header.appendSlice(allocator,
         \\// ffi:
-        \\//   intern a string into revo's string pool
+        \\//   intern a string -> returns stable id
         \\//   ptr must stay valid for the duration of the call
+        \\//   revo_string_data / revo_string_length read back interned strings
         \\
     );
 

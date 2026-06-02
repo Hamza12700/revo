@@ -1,8 +1,0 @@
-print("// examples module")
-
-const ex = import("all.so")
-
-print("echo:", ex.echo("hello"))
-print("strlen:", ex.strlen_fn("hello"))
-print("add:", ex.add(3, 4))
-print("type(5):", ex.type(5))

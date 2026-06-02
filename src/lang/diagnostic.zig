@@ -71,7 +71,7 @@ pub const Report = struct {
     source: ?[]const u8 = null,
 
     pub fn deinit(self: *Report, alloc: std.mem.Allocator) void {
-        alloc.free(self.message);
+        if (self.message.len != 0) alloc.free(self.message);
         if (self.source_name) |source_name| alloc.free(source_name);
         if (self.source) |source| alloc.free(source);
         for (self.parts) |part| switch (part) {
