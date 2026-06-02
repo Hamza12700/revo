@@ -408,7 +408,7 @@ fn reportToDiags(arena: std.mem.Allocator, report: lang.diagnostic.Report) ![]T.
                 .context => T.Diagnostic.Severity.Information,
                 .trace => T.Diagnostic.Severity.Hint,
             },
-            .message = if (sp.message.len > 0) sp.message else report.message,
+            .message = report.message,
             .source = "revo",
             .tags = &.{},
             .relatedInformation = &.{},
