@@ -29,6 +29,8 @@ var isocline_ctx: ?IsoclineContext = null;
 const splash_texts = [_][]const u8{
     "hi",
     "make your readme .nfo",
+    "the moon is flat",
+    "the earth landing is fake",
     "It took Python 33 years to get syntax highlighting in REPL btw",
     "used to be the first language on earth",
     "try :h [function_name] or :h [any_variable]",
