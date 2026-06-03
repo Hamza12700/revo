@@ -1292,10 +1292,6 @@ pub const Compiler = struct {
 
             const inferred_type = type_check.inferExprType(self, binding.value);
             try state_mod.setLocalTypeHint(self, name, inferred_type);
-            if (type_check.storedTypeName(self, inferred_type)) |stored_name| {
-                if (state_mod.currentFunctionState(self)) |fn_state|
-                    try fn_state.var_types.put(name, stored_name);
-            }
 
             if (ast.isDiscardName(name)) return;
             try emit.regDupe(self);
@@ -1386,7 +1382,6 @@ pub const Compiler = struct {
                 s.deinit(self.alloc);
                 return err;
             };
-            if (param.type_name) |type_name| try s.var_types.put(param.name, type_name);
             if (param.type_name) |type_name| {
                 s.type_hints.append(self.alloc, .{
                     .name = param.name,

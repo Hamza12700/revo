@@ -102,11 +102,8 @@ pub fn compileLocalBinding(
         type_check.inferExprType(self, value);
 
     try state.setLocalTypeHint(self, name, inferred_type);
-    if (type_check.storedTypeName(self, inferred_type)) |stored_name| {
+    if (type_check.storedTypeName(self, inferred_type)) |stored_name|
         state.setLocalType(self, slot, stored_name);
-        if (state.currentFunctionState(self)) |fn_state|
-            try fn_state.var_types.put(name, stored_name);
-    }
 
     try emit.regDupe(self);
     try emit.emit(self, .bind_local, slot);
@@ -224,11 +221,8 @@ fn compileAssignSimple(
                 try syncLocalTableFields(self, slot, value);
                 const inferred_type = type_check.inferExprType(self, value);
                 try state.setLocalTypeHint(self, name, inferred_type);
-                if (type_check.storedTypeName(self, inferred_type)) |stored_name| {
+                if (type_check.storedTypeName(self, inferred_type)) |stored_name|
                     state.setLocalType(self, slot, stored_name);
-                    if (state.currentFunctionState(self)) |fn_state|
-                        try fn_state.var_types.put(name, stored_name);
-                }
             } else if (try state.resolveUpvalue(self, name)) |slot| {
                 try emit.emit(self, .store_upval, slot);
             } else {
@@ -535,8 +529,8 @@ pub fn compileStruct(
         .field => {},
     };
 
-    if (state.currentFunctionState(self)) |fn_state|
-        try fn_state.var_types.put(name, name);
+    if (state.currentFunctionState(self) != null)
+        try state.setLocalTypeHint(self, name, .{ .struct_type = name });
 }
 
 pub fn compileTable(self: *Compiler, entries: []const ast.TableEntry) !void {

@@ -37,7 +37,6 @@ pub const FunctionState = struct {
     type_hints: std.ArrayList(TypeHint),
     type_scope_starts: std.ArrayList(usize),
     return_type: ?[]const u8 = null,
-    var_types: std.StringHashMap(?[]const u8),
     fn_signatures: std.StringHashMap(*FnSig),
 
     pub const FnSig = struct {
@@ -55,7 +54,6 @@ pub const FunctionState = struct {
             .scope_starts = try std.ArrayList(usize).initCapacity(alloc, 8),
             .type_hints = try std.ArrayList(TypeHint).initCapacity(alloc, 8),
             .type_scope_starts = try std.ArrayList(usize).initCapacity(alloc, 8),
-            .var_types = std.StringHashMap(?[]const u8).init(alloc),
             .fn_signatures = std.StringHashMap(*FnSig).init(alloc),
         };
     }
@@ -67,7 +65,6 @@ pub const FunctionState = struct {
         self.scope_starts.deinit(alloc);
         self.type_hints.deinit(alloc);
         self.type_scope_starts.deinit(alloc);
-        self.var_types.deinit();
         var it = self.fn_signatures.iterator();
         while (it.next()) |entry| {
             alloc.free(entry.value_ptr.*.param_types);

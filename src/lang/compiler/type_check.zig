@@ -42,9 +42,7 @@ fn inferVarType(self: *Compiler, name: []const u8) TypeInfo {
 
 fn inferTypeMap(self: *Compiler, name: []const u8) TypeInfo {
     if (self.type_aliases.get(name)) |aliased| return aliased;
-    const fn_state = state_mod.currentFunctionState(self) orelse return .any;
-    const type_str = fn_state.var_types.get(name) orelse return .any;
-    return types_mod.resolveTypeName(self, type_str orelse return .any);
+    return state_mod.resolveLocalTypeHint(self, name) orelse .any;
 }
 
 pub fn inferIdentType(self: *Compiler, name: []const u8) TypeInfo {

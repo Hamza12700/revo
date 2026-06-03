@@ -110,12 +110,12 @@ pub fn compileRangeLoopBody(
     if (params.len >= 1 and !ast.isDiscardName(params[0].name)) {
         value_slot = try state.declareLocal(self, params[0].name, false);
         state.setLocalType(self, value_slot.?, "int");
-        if (state.currentFunctionState(self)) |fn_state| try fn_state.var_types.put(params[0].name, "int");
+        try state.setLocalTypeHint(self, params[0].name, .int);
     }
     if (params.len == 2 and !ast.isDiscardName(params[1].name)) {
         index_slot = try state.declareLocal(self, params[1].name, false);
         state.setLocalType(self, index_slot.?, "int");
-        if (state.currentFunctionState(self)) |fn_state| try fn_state.var_types.put(params[1].name, "int");
+        try state.setLocalTypeHint(self, params[1].name, .int);
     }
 
     const loop_check: ProgramCounter = @intCast(self.instructions.items.len);
