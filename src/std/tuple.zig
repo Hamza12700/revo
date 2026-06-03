@@ -1,38 +1,69 @@
-const std = @import("std");
-const revo = @import("../root.zig");
-const root = @import("root.zig");
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
-
-const iter = @import("iter.zig");
-
-pub fn register(vm: *VM) !void {
-    try root.registerTableFunctions(vm, "tuple", &[_]root.FuncDef{
-        .{ .name = "len", .f = root.define(&[_]root.TypeSpec{.tuple}, len) },
-        .{ .name = "unwrap", .f = root.define(&[_]root.TypeSpec{.tuple}, root.try_) },
-        .{ .name = "unwrap_err", .f = root.define(&[_]root.TypeSpec{.tuple}, root.unwrap_err_) },
-        .{ .name = "map", .f = root.define(&.{ .any, .function }, iter.map_fn) },
-        .{ .name = "filter", .f = root.define(&.{ .any, .function }, iter.filter_fn) },
-        .{ .name = "reduce", .f = root.define(&.{ .any, .function, .any }, iter.reduce_fn) },
-        .{ .name = "each", .f = root.define(&.{ .any, .function }, iter.each_fn) },
-        .{ .name = "find", .f = root.define(&.{ .any, .function }, iter.find_fn) },
-        .{ .name = "all?", .f = root.define(&.{ .any, .function }, iter.all_fn) },
-        .{ .name = "any?", .f = root.define(&.{ .any, .function }, iter.any_fn) },
-        .{ .name = "add", .f = root.define(&[_]root.TypeSpec{ .tuple, .tuple }, add) },
-        .{ .name = "mul", .f = root.define(&[_]root.TypeSpec{ .tuple, .number }, mul) },
-    });
-
-    try root.registerMetatable(vm, &[_]root.MethodDef{
-        .{ .key = .{ .named = "len" }, .func = root.define(&[_]root.TypeSpec{.tuple}, len) },
-        .{ .key = .{ .named = "unwrap" }, .func = root.define(&[_]root.TypeSpec{.tuple}, root.try_) },
-        .{ .key = .{ .named = "unwrap_err" }, .func = root.define(&[_]root.TypeSpec{.tuple}, root.unwrap_err_) },
-        .{ .key = .{ .core = .__index }, .func = root.define(&[_]root.TypeSpec{ .tuple, .number }, index) },
-        .{ .key = .{ .named = "add" }, .func = root.define(&[_]root.TypeSpec{ .tuple, .tuple }, add) },
-        .{ .key = .{ .named = "mul" }, .func = root.define(&[_]root.TypeSpec{ .tuple, .number }, mul) },
-    }, Data.new.tuple(std.math.maxInt(usize)));
-}
+pub const specs: []const api.FnSpec = &.{
+    .{
+        .name = "len",
+        .placements = &.{ api.mod("tuple"), api.method("tuple", .tuple) },
+        .params = &.{
+            .{ "self", "tuple" },
+        },
+        .ret = "number",
+        .doc = "returns length of tuple",
+        .f = root.define(&[_]root.TypeSpec{.tuple}, len),
+    },
+    .{
+        .name = "unwrap",
+        .placements = &.{ api.mod("tuple"), api.method("tuple", .tuple) },
+        .params = &.{
+            .{ "self", "tuple" },
+        },
+        .ret = "any",
+        .doc = "unwraps result tuple, panics if not :ok",
+        .f = root.define(&[_]root.TypeSpec{.tuple}, root.try_),
+    },
+    .{
+        .name = "unwrap_err",
+        .placements = &.{ api.mod("tuple"), api.method("tuple", .tuple) },
+        .params = &.{
+            .{ "self", "tuple" },
+        },
+        .ret = "any",
+        .doc = "extracts error from result tuple, panics if not :err",
+        .f = root.define(&[_]root.TypeSpec{.tuple}, root.unwrap_err_),
+    },
+    .{
+        .name = "add",
+        .placements = &.{ api.mod("tuple"), api.method("tuple", .tuple) },
+        .params = &.{
+            .{ "self", "tuple" },
+            .{ "other", "tuple" },
+        },
+        .ret = "tuple",
+        .doc = "concatenates two tuples",
+        .f = root.define(&[_]root.TypeSpec{ .tuple, .tuple }, add),
+    },
+    .{
+        .name = "mul",
+        .placements = &.{ api.mod("tuple"), api.method("tuple", .tuple) },
+        .params = &.{
+            .{ "self", "tuple" },
+            .{ "n", "number" },
+        },
+        .ret = "tuple",
+        .doc = "repeats tuple n times",
+        .f = root.define(&[_]root.TypeSpec{ .tuple, .number }, mul),
+    },
+    .{
+        .name = "__index",
+        .placements = &.{api.method("tuple", .tuple)},
+        .params = &.{
+            .{ "self", "tuple" },
+            .{ "idx", "number" },
+        },
+        .ret = "any",
+        .doc = "returns element at index",
+        .f = root.define(&[_]root.TypeSpec{ .tuple, .number }, index),
+        .core_key = revo.core_atoms.__index,
+    },
+};
 
 fn len(args: []const Data, vm: *VM) !NativeResult {
     const id = args[0].asTuple() orelse return .errType(0, "tuple", root.dataToString(args[0]));
@@ -92,3 +123,13 @@ fn _debug(args: []const Data, vm: *VM) !NativeResult {
     const str = try buf.toOwnedSlice();
     return .{ .ok = try vm.adoptDataString(str) };
 }
+
+const std = @import("std");
+
+const revo = @import("../root.zig");
+const Data = revo.Data;
+const VM = revo.VM;
+const api = @import("api.zig");
+const iter = @import("iter.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;

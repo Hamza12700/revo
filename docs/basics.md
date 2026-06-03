@@ -14,11 +14,13 @@ const user = {
   points = add(a, b),
   bump = fn(self) self.points += 1,
 }
-fn user:name(self) 
+
+# colon syntax in function call means "first arg is left-hand-side"
+assert(user:name() == user.name(user))
 
 # pipes 
 "asdf"
-  |> _:upper() "ASDF"
+  |> _:upper() # "ASDF"
   |> _:sub(1, 2) # "SD"
   |> assert_eq("sd") # "SD"
   |> _ + "f" # "SDF"
@@ -145,7 +147,7 @@ the fundamental types are:
 
     it also captures values from the outer scope, like most modern languages
 
-    closures capture by reference (upvalues link to outer variable slots), so mutations are visible
+    closures capture outer values by reference, so mutations are visible
     to all closures sharing that variable:
     ```ruby
     fn make_counter() do

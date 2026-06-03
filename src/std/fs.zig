@@ -1,14 +1,138 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const revo = @import("../root.zig");
-const root = @import("root.zig");
-const meta = @import("meta.zig");
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
-const Dir = std.Io.Dir;
-const File = std.Io.File;
+pub const specs: []const api.FnSpec = &.{
+    // fs module
+    .{
+        .name = "open",
+        .placements = &.{api.mod("fs")},
+        .params = &.{
+            .{ "path", "string" },
+        },
+        .ret = "(:ok, table) | (:err, atom)",
+        .doc =
+        \\wraps a path in a file handle table
+        \\use `file.close()` when you're done with the handle
+        ,
+        .f = root.define(&.{.string}, open_fn),
+    },
+    .{
+        .name = "readdir",
+        .placements = &.{api.mod("fs")},
+        .params = &.{
+            .{ "path", "string" },
+        },
+        .ret = "(:ok, table) | (:err, atom)",
+        .doc = "returns table of directory entries",
+        .f = root.define(&.{.string}, readdir_fn),
+    },
+    .{
+        .name = "exists?",
+        .placements = &.{api.mod("fs")},
+        .params = &.{
+            .{ "path", "string" },
+        },
+        .ret = "(:ok, bool) | (:err, atom)",
+        .doc = "does path exist?",
+        .f = root.define(&.{.string}, exists_fn),
+    },
+    .{
+        .name = "remove",
+        .placements = &.{api.mod("fs")},
+        .params = &.{
+            .{ "path", "string" },
+        },
+        .ret = "(:ok, atom) | (:err, atom)",
+        .doc = "removes a file or empty directory at path",
+        .f = root.define(&.{.string}, remove_fn),
+    },
+    .{
+        .name = "mkdir",
+        .placements = &.{api.mod("fs")},
+        .params = &.{
+            .{ "path", "string" },
+            .{ "permissions", "atom|number?" },
+        },
+        .ret = "(:ok, atom) | (:err, atom)",
+        .doc = "creates a directory, using default permissions when omitted",
+        .variadic = true,
+        .f = root.defineVariadic(&.{.string}, mkdir_fn),
+    },
+    .{
+        .name = "rename",
+        .placements = &.{api.mod("fs")},
+        .params = &.{
+            .{ "old_path", "string" },
+            .{ "new_path", "string" },
+        },
+        .ret = "(:ok, atom) | (:err, atom)",
+        .doc = "renames a file or directory",
+        .f = root.define(&.{ .string, .string }, rename_fn),
+    },
+    // file module (used as __index for file handle mts)
+    .{
+        .name = "read",
+        .placements = &.{api.mod("file")},
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "(:ok, string) | (:err, atom)",
+        .doc = "reads the full file contents as a string",
+        .f = root.define(&.{.any}, read_fn),
+    },
+    .{
+        .name = "write",
+        .placements = &.{api.mod("file")},
+        .params = &.{
+            .{ "self", "table" },
+            .{ "data", "any" },
+            .{ "permissions", "atom|number?" },
+        },
+        .ret = "(:ok, number) | (:err, atom)",
+        .doc =
+        \\overwrites the file with the provided string
+        \\optional permissions default to the platform file default
+        ,
+        .variadic = true,
+        .f = root.defineVariadic(&.{ .any, .any }, write_fn),
+    },
+    .{
+        .name = "append",
+        .placements = &.{api.mod("file")},
+        .params = &.{
+            .{ "self", "table" },
+            .{ "data", "any" },
+            .{ "permissions", "atom|number?" },
+        },
+        .ret = "(:ok, number) | (:err, atom)",
+        .doc =
+        \\appends data to the file, creating it if needed
+        \\optional permissions default to the platform file default
+        ,
+        .variadic = true,
+        .f = root.defineVariadic(&.{ .any, .any }, append_fn),
+    },
+    .{
+        .name = "stat",
+        .placements = &.{api.mod("file")},
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "(:ok, table) | (:err, atom)",
+        .doc = "get file metadata as a table",
+        .f = root.define(&.{.any}, stat_fn),
+    },
+    .{
+        .name = "close",
+        .placements = &.{api.mod("file")},
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "(:ok, atom) | (:err, atom)",
+        .doc =
+        \\closes a file handle table
+        \\this is currently a logical close for wrapper handles
+        ,
+        .f = root.define(&.{.any}, close_fn),
+    },
+};
 
 const path_key = "__path";
 // 1gb
@@ -18,24 +142,6 @@ const PermTag = @typeInfo(File.Permissions).@"enum".tag_type;
 const FileHandle = struct {
     path: []const u8,
 };
-
-pub fn register(vm: *VM) !void {
-    try root.registerTableFunctions(vm, "fs", &[_]root.FuncDef{
-        .{ .name = "open", .f = root.define(&.{.string}, open_fn) },
-        .{ .name = "readdir", .f = root.define(&.{.string}, readdir_fn) },
-        .{ .name = "exists?", .f = root.define(&.{.string}, exists_fn) },
-        .{ .name = "remove", .f = root.define(&.{.string}, remove_fn) },
-        .{ .name = "mkdir", .f = root.defineVariadic(&.{.string}, mkdir_fn) },
-        .{ .name = "rename", .f = root.define(&.{ .string, .string }, rename_fn) },
-    });
-    try root.registerTableFunctions(vm, "file", &[_]root.FuncDef{
-        .{ .name = "read", .f = root.define(&.{.any}, read_fn) },
-        .{ .name = "write", .f = root.defineVariadic(&.{ .any, .any }, write_fn) },
-        .{ .name = "append", .f = root.defineVariadic(&.{ .any, .any }, append_fn) },
-        .{ .name = "stat", .f = root.define(&.{.any}, stat_fn) },
-        .{ .name = "close", .f = root.define(&.{.any}, close_fn) },
-    });
-}
 
 fn wrapFile(vm: *VM, path: []const u8) !Data {
     const file_table = try vm.tables.create();
@@ -316,10 +422,6 @@ fn rename_fn(args: []const Data, vm: *VM) !NativeResult {
     return try NativeResult.Ok(vm, revo.core_atoms.data(.ok));
 }
 
-const testing = revo.lang.testing;
-const io = std.testing.io;
-const alloc = std.testing.allocator;
-
 fn sourceForPath(comptime template: []const u8, path: []const u8) ![]u8 {
     return std.fmt.allocPrint(alloc, template, .{path});
 }
@@ -416,3 +518,19 @@ test "fs.readdir returns table of entries" {
     defer alloc.free(source);
     try testing.top_true(source);
 }
+
+const std = @import("std");
+const Dir = std.Io.Dir;
+const File = std.Io.File;
+const io = std.testing.io;
+const alloc = std.testing.allocator;
+const builtin = @import("builtin");
+
+const revo = @import("../root.zig");
+const Data = revo.Data;
+const VM = revo.VM;
+const testing = revo.lang.testing;
+const api = @import("api.zig");
+const meta = @import("meta.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;

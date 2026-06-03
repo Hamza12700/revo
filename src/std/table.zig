@@ -1,86 +1,288 @@
-const std = @import("std");
-const revo = @import("../root.zig");
-const root = @import("root.zig");
-const testing = revo.lang.testing;
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
-const dataToString = root.dataToString;
-
-pub fn register(vm: *VM) !void {
-    const iter = @import("iter.zig");
-    try root.registerTableFunctions(vm, "table", &[_]root.FuncDef{
-        .{ .name = "rawget", .f = root.define(&.{ .table, .any }, rawget) },
-        .{ .name = "rawset", .f = root.define(&.{ .table, .any, .any }, rawset) },
-        .{ .name = "set_meta", .f = root.define(&.{.table}, @import("meta.zig").set_metatable_) },
-        .{ .name = "unwrap", .f = root.define(&.{.table}, @"try") },
-        .{ .name = "insert", .f = root.define(&.{ .table, .number, .any }, insert) },
-        .{ .name = "push", .f = root.defineVariadic(&.{.table}, push) },
-        .{ .name = "as_tuple", .f = root.define(&.{.table}, as_tuple) },
-        .{ .name = "remove", .f = root.define(&.{ .table, .number }, remove) },
-        .{ .name = "concat", .f = root.define(&.{ .table, .string }, concat) },
-        .{ .name = "keys", .f = root.define(&.{.table}, keys) },
-        .{ .name = "values", .f = root.define(&.{.table}, values) },
-        .{ .name = "has?", .f = root.define(&.{ .table, .any }, has) },
-        .{ .name = "copy", .f = root.define(&.{.table}, copy) },
-        .{ .name = "merge", .f = root.define(&.{ .table, .table }, merge) },
-        .{ .name = "sort", .f = root.define(&.{.table}, sort) },
-        .{ .name = "sort_by", .f = root.define(&.{ .table, .function }, sort_by) },
-        .{ .name = "first", .f = root.define(&.{.table}, first) },
-        .{ .name = "last", .f = root.define(&.{.table}, last) },
-        .{ .name = "reverse", .f = root.define(&.{.table}, reverse) },
-        .{ .name = "flatten", .f = root.define(&.{.table}, flatten) },
-        .{ .name = "index_of", .f = root.define(&.{ .table, .any }, index_of) },
-        .{ .name = "contains?", .f = root.define(&.{ .table, .any }, contains) },
-        .{ .name = "unique", .f = root.define(&.{.table}, unique) },
-        .{ .name = "sum", .f = root.define(&.{.table}, sum) },
-        .{ .name = "len", .f = root.define(&.{.table}, len) },
-        .{ .name = "add", .f = root.define(&.{ .table, .table }, tableAdd) },
-        .{ .name = "map", .f = root.define(&.{ .any, .function }, iter.map_fn) },
-        .{ .name = "filter", .f = root.define(&.{ .any, .function }, iter.filter_fn) },
-        .{ .name = "reduce", .f = root.define(&.{ .any, .function, .any }, iter.reduce_fn) },
-        .{ .name = "each", .f = root.define(&.{ .any, .function }, iter.each_fn) },
-        .{ .name = "find", .f = root.define(&.{ .any, .function }, iter.find_fn) },
-        .{ .name = "all?", .f = root.define(&.{ .any, .function }, iter.all_fn) },
-        .{ .name = "any?", .f = root.define(&.{ .any, .function }, iter.any_fn) },
-    });
-
-    try root.registerMetatable(vm, &[_]root.MethodDef{
-        .{ .key = .{ .named = "set_meta" }, .func = root.define(&.{.table}, @import("meta.zig").set_metatable_) },
-        .{ .key = .{ .named = "unwrap" }, .func = root.define(&.{.table}, @"try") },
-        .{ .key = .{ .named = "insert" }, .func = root.define(&.{ .table, .number, .any }, insert) },
-        .{ .key = .{ .named = "push" }, .func = root.defineVariadic(&.{.table}, push) },
-        .{ .key = .{ .named = "as_tuple" }, .func = root.define(&.{.table}, as_tuple) },
-        .{ .key = .{ .named = "remove" }, .func = root.define(&.{ .table, .number }, remove) },
-        .{ .key = .{ .named = "concat" }, .func = root.define(&.{ .table, .string }, concat) },
-        .{ .key = .{ .named = "keys" }, .func = root.define(&.{.table}, keys) },
-        .{ .key = .{ .named = "values" }, .func = root.define(&.{.table}, values) },
-        .{ .key = .{ .named = "has?" }, .func = root.define(&.{ .table, .any }, has) },
-        .{ .key = .{ .named = "copy" }, .func = root.define(&.{.table}, copy) },
-        .{ .key = .{ .named = "merge" }, .func = root.define(&.{ .table, .table }, merge) },
-        .{ .key = .{ .named = "sort" }, .func = root.define(&.{.table}, sort) },
-        .{ .key = .{ .named = "sort_by" }, .func = root.define(&.{ .table, .function }, sort_by) },
-        .{ .key = .{ .named = "first" }, .func = root.define(&.{.table}, first) },
-        .{ .key = .{ .named = "last" }, .func = root.define(&.{.table}, last) },
-        .{ .key = .{ .named = "reverse" }, .func = root.define(&.{.table}, reverse) },
-        .{ .key = .{ .named = "flatten" }, .func = root.define(&.{.table}, flatten) },
-        .{ .key = .{ .named = "index_of" }, .func = root.define(&.{ .table, .any }, index_of) },
-        .{ .key = .{ .named = "contains?" }, .func = root.define(&.{ .table, .any }, contains) },
-        .{ .key = .{ .named = "unique" }, .func = root.define(&.{.table}, unique) },
-        .{ .key = .{ .named = "sum" }, .func = root.define(&.{.table}, sum) },
-        .{ .key = .{ .named = "len" }, .func = root.define(&.{.table}, len) },
-        .{ .key = .{ .named = "add" }, .func = root.define(&.{ .table, .table }, tableAdd) },
-        // from iter.zig
-        .{ .key = .{ .named = "map" }, .func = root.define(&.{ .any, .function }, iter.map_fn) },
-        .{ .key = .{ .named = "filter" }, .func = root.define(&.{ .any, .function }, iter.filter_fn) },
-        .{ .key = .{ .named = "reduce" }, .func = root.define(&.{ .any, .function, .any }, iter.reduce_fn) },
-        .{ .key = .{ .named = "each" }, .func = root.define(&.{ .any, .function }, iter.each_fn) },
-        .{ .key = .{ .named = "find" }, .func = root.define(&.{ .any, .function }, iter.find_fn) },
-        .{ .key = .{ .named = "all?" }, .func = root.define(&.{ .any, .function }, iter.all_fn) },
-        .{ .key = .{ .named = "any?" }, .func = root.define(&.{ .any, .function }, iter.any_fn) },
-    }, Data.new.table(std.math.maxInt(usize)));
-}
+pub const specs: []const api.FnSpec = &.{
+    // module-only
+    .{
+        .name = "rawget",
+        .placements = &.{api.mod("table")},
+        .params = &.{
+            .{ "self", "table" },
+            .{ "key", "any" },
+        },
+        .ret = "any",
+        .doc =
+        \\gets value without metamethods
+        \\returns :undef if key missing
+        ,
+        .f = root.define(&.{ .table, .any }, rawget),
+    },
+    .{
+        .name = "rawset",
+        .placements = &.{api.mod("table")},
+        .params = &.{
+            .{ "self", "table" },
+            .{ "key", "any" },
+            .{ "value", "any" },
+        },
+        .ret = "table",
+        .doc = "sets value without metamethods",
+        .f = root.define(&.{ .table, .any, .any }, rawset),
+    },
+    // methods (also exposed on the table metatable)
+    .{
+        .name = "set_meta",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "sets the metatable of the table",
+        .f = root.define(&.{.table}, @import("meta.zig").set_metatable_),
+    },
+    .{
+        .name = "unwrap",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "any",
+        .doc = "unwraps result tuple, panics if not :ok",
+        .f = root.define(&.{.table}, @"try"),
+    },
+    .{
+        .name = "insert",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "pos", "number" },
+            .{ "value", "any" },
+        },
+        .ret = "atom",
+        .doc = "inserts value at position, shifting elements right",
+        .f = root.define(&.{ .table, .number, .any }, insert),
+    },
+    .{
+        .name = "push",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "values", "any..." },
+        },
+        .ret = "table",
+        .doc = "inserts elements as last",
+        .variadic = true,
+        .f = root.defineVariadic(&.{.table}, push),
+    },
+    .{
+        .name = "as_tuple",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "tuple",
+        .doc = "converts table array part to tuple",
+        .f = root.define(&.{.table}, as_tuple),
+    },
+    .{
+        .name = "remove",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "pos", "number" },
+        },
+        .ret = "any",
+        .doc = "removes element at position, returns removed value",
+        .f = root.define(&.{ .table, .number }, remove),
+    },
+    .{
+        .name = "concat",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "delim", "string" },
+        },
+        .ret = "string",
+        .doc = "concatenates array elements with delimiter",
+        .f = root.define(&.{ .table, .string }, concat),
+    },
+    .{
+        .name = "keys",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "returns all keys as table (array indices + hash keys)",
+        .f = root.define(&.{.table}, keys),
+    },
+    .{
+        .name = "values",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "returns all values as table",
+        .f = root.define(&.{.table}, values),
+    },
+    .{
+        .name = "has?",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "key", "any" },
+        },
+        .ret = "bool",
+        .doc = "checks if key exists in table",
+        .f = root.define(&.{ .table, .any }, has),
+    },
+    .{
+        .name = "copy",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "creates shallow copy of table",
+        .f = root.define(&.{.table}, copy),
+    },
+    .{
+        .name = "merge",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "other", "table" },
+        },
+        .ret = "table",
+        .doc =
+        \\merges second table into first
+        \\later values overwrite earlier ones
+        ,
+        .f = root.define(&.{ .table, .table }, merge),
+    },
+    .{
+        .name = "sort",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "sorts table array part in ascending order (numbers < strings)",
+        .f = root.define(&.{.table}, sort),
+    },
+    .{
+        .name = "sort_by",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "fn", "function" },
+        },
+        .ret = "table",
+        .doc = "sorts table array part using comparison function fn(a, b) -> bool (true if a < b)",
+        .f = root.define(&.{ .table, .function }, sort_by),
+    },
+    .{
+        .name = "first",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "any",
+        .doc = "returns first element or nil",
+        .f = root.define(&.{.table}, first),
+    },
+    .{
+        .name = "last",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "any",
+        .doc = "returns last element or nil",
+        .f = root.define(&.{.table}, last),
+    },
+    .{
+        .name = "reverse",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "reverses table array part in place",
+        .f = root.define(&.{.table}, reverse),
+    },
+    .{
+        .name = "flatten",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "flattens nested tables into single array",
+        .f = root.define(&.{.table}, flatten),
+    },
+    .{
+        .name = "index_of",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "value", "any" },
+        },
+        .ret = "number|nil",
+        .doc = "ret 0-based index of value or nil if not found",
+        .f = root.define(&.{ .table, .any }, index_of),
+    },
+    .{
+        .name = "contains?",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "value", "any" },
+        },
+        .ret = "bool",
+        .doc = "checks if table contains value",
+        .f = root.define(&.{ .table, .any }, contains),
+    },
+    .{
+        .name = "unique",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "table",
+        .doc = "removes duplicate elements",
+        .f = root.define(&.{.table}, unique),
+    },
+    .{
+        .name = "sum",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "number",
+        .doc = "sums numeric elements",
+        .f = root.define(&.{.table}, sum),
+    },
+    .{
+        .name = "len",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "number",
+        .doc = "returns length of table array part",
+        .f = root.define(&.{.table}, len),
+    },
+    .{
+        .name = "add",
+        .placements = &.{ api.mod("table"), api.method("table", .table) },
+        .params = &.{
+            .{ "self", "table" },
+            .{ "other", "table" },
+        },
+        .ret = "table",
+        .doc = "merges two tables (union)",
+        .f = root.define(&.{ .table, .table }, tableAdd),
+    },
+};
 
 /// > unwrap(result: tuple) -> any
 /// unwraps result tuple, panics if not :ok
@@ -560,3 +762,14 @@ test "table methods" {
     try testing.top_number("{1, 2, 3}:index_of(2)", 1);
     try testing.top_number("{1, 2, 3}:sum()", 6);
 }
+
+const std = @import("std");
+
+const revo = @import("../root.zig");
+const testing = revo.lang.testing;
+const Data = revo.Data;
+const VM = revo.VM;
+const api = @import("api.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;
+const dataToString = root.dataToString;

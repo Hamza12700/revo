@@ -87,6 +87,84 @@ async def test_clean_diagnostics(client: LanguageClient):
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_each_string_no_diag(client: LanguageClient):
+    """`each("hello", fn(c) print(c))` is a valid stdlib call and
+    wont wont raise a parse error"""
+    uri = "file:///test/each.rv"
+    text = 'each("hello", fn(c) print(c))\n'
+    client.text_document_did_open(
+        params=DidOpenTextDocumentParams(
+            text_document=TextDocumentItem(
+                uri=uri, language_id="revo", version=1, text=text,
+            )
+        )
+    )
+    await client.wait_for_notification("textDocument/publishDiagnostics")
+    diags = client.diagnostics.get(uri, [])
+    for d in diags:
+        print(f"  diag: {d.message!r} at {d.range}")
+    assert len(diags) == 0, f"expected no diagnostics, got {
+        len(diags)}: {[d.message for d in diags]}"
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_each_string_clean_after_typing(client: LanguageClient):
+    """`each("hello", fn(c) print(c))` triggers an "unexpected token"
+    while the user is mid-typing. once they finish, the diagnostic
+    will clear"""
+    uri = "file:///test/each_typing.rv"
+    # do `fn)` with no params first, then
+    # the full `fn(c) print(c))` form
+    client.text_document_did_open(
+        params=DidOpenTextDocumentParams(
+            text_document=TextDocumentItem(
+                uri=uri, language_id="revo", version=1,
+                text='each("hello", fn)\n',
+            )
+        )
+    )
+    await client.wait_for_notification("textDocument/publishDiagnostics")
+    diags_mid = client.diagnostics.get(uri, [])
+    print(f"  mid-typing: {len(diags_mid)}")
+    # print("done")
+    client.text_document_did_change(
+        params=DidChangeTextDocumentParams(
+            text_document=VersionedTextDocumentIdentifier(uri=uri, version=2),
+            content_changes=[TextDocumentContentChangeWholeDocument(
+                text='each("hello", fn(c) print(c))\n',
+            )],
+        )
+    )
+    await client.wait_for_notification("textDocument/publishDiagnostics")
+    diags_final = client.diagnostics.get(uri, [])
+    for d in diags_final:
+        print(f"  final diag: {d.message!r} at {d.range}")
+    assert len(diags_final) == 0, f"expected no diagnostics after fix, got {
+        len(diags_final)}: {[d.message for d in diags_final]}"
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_each_string_no_diag_open(client: LanguageClient):
+    """open a file containing only `each("hello", fn(c) print(c))` will have no
+    typing history, no stale state and 0 diagnostics"""
+    uri = "file:///test/each_open.rv"
+    text = 'each("hello", fn(c) print(c))\n'
+    client.text_document_did_open(
+        params=DidOpenTextDocumentParams(
+            text_document=TextDocumentItem(
+                uri=uri, language_id="revo", version=1, text=text,
+            )
+        )
+    )
+    await client.wait_for_notification("textDocument/publishDiagnostics")
+    diags = client.diagnostics.get(uri, [])
+    for d in diags:
+        print(f"  diag: msg={d.message!r} code={d.code} range={d.range}")
+    assert len(diags) == 0, f"expected no diagnostics, got {
+        len(diags)}: {[(d.message, d.range) for d in diags]}"
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_definition(client: LanguageClient):
     """go to definition on `say_hi` call should point to `fn say_hi"""
     result = await client.text_document_definition_async(
@@ -324,7 +402,8 @@ async def test_completion_prefix(client: LanguageClient):
     labels = [i.label for i in items]
     assert "print" in labels, f"expected 'print' in {labels}"
     # "pri" prefix should not match things like "fn" or "x"
-    assert "fn" not in labels, f"'fn' should not match 'pri' prefix, got {labels}"
+    assert "fn" not in labels, f"'fn' should not match 'pri' prefix, got {
+        labels}"
     assert "x" not in labels, "'x' should not match 'pri' prefix"
 
     client.text_document_did_close(
@@ -360,13 +439,16 @@ async def test_completion_kinds(client: LanguageClient):
     items = result.items if hasattr(result, 'items') else result
     kinds = {i.label: i.kind for i in items}
     # keywords should be kind=14 (Keyword)
-    assert kinds.get("fn") == 14, f"'fn' should be Keyword kind (14), got {kinds.get('fn')}"
+    assert kinds.get("fn") == 14, f"'fn' should be Keyword kind (14), got {
+        kinds.get('fn')}"
     assert kinds.get("if") == 14
     # functions should be kind=3 (Function)
-    assert kinds.get("print") == 3, f"'print' should be Function kind (3), got {kinds.get('print')}"
+    assert kinds.get("print") == 3, f"'print' should be Function kind (3), got {
+        kinds.get('print')}"
     assert kinds.get("len") == 3
     # all kinds should be valid ints
-    assert all(isinstance(v, int) for v in kinds.values()), "all kinds should be ints"
+    assert all(isinstance(v, int)
+               for v in kinds.values()), "all kinds should be ints"
 
     client.text_document_did_close(
         params=DidCloseTextDocumentParams(

@@ -574,6 +574,33 @@ pub const Workspace = struct {
         defer analysis.deinit(alloc);
         const snap = analysis.snapshot;
         const name = wordAtPosition(snap.text, pos) orelse return null;
+
+        // stdlib fallback; when name not bound in the ast
+        if (try self.definition(alloc, id, pos, opts) == null) {
+            if (revo.std_lib.api.find(name)) |spec| {
+                var buf = std.Io.Writer.Allocating.init(alloc);
+                defer buf.deinit();
+                try buf.writer.writeAll("`");
+                try revo.std_lib.api.renderSignature(&buf.writer, spec);
+                try buf.writer.writeAll("`");
+                if (spec.doc.len > 0) {
+                    try buf.writer.writeAll("\n");
+                    try buf.writer.writeAll(spec.doc);
+                }
+                const text = try buf.toOwnedSlice();
+                return .{
+                    .text = text,
+                    .range = .{
+                        .start = pos,
+                        .end = .{
+                            .line = pos.line,
+                            .character = pos.character + @as(u32, @intCast(name.len)),
+                        },
+                    },
+                };
+            }
+            return null;
+        }
         const def = try self.definition(alloc, id, pos, opts) orelse return null;
 
         // find symbol kind and type from analysis
@@ -644,6 +671,37 @@ pub const Workspace = struct {
         const snap = self.snapshot(id) orelse return null;
         const call_info = findCallAtPosition(snap.text, pos) orelse return null;
 
+        // stdlib fallback: name not bound in any AST
+        if (try self.bestLocation(alloc, call_info.name, id, pos, opts) == null) {
+            if (revo.std_lib.api.find(call_info.name)) |spec| {
+                const name = try alloc.dupe(u8, spec.name);
+                errdefer alloc.free(name);
+
+                const params = try alloc.alloc(ParamInfo, spec.params.len);
+                errdefer alloc.free(params);
+                for (spec.params, 0..) |p, i| {
+                    params[i] = .{
+                        .name = try alloc.dupe(u8, p[0]),
+                        .type_name = try alloc.dupe(u8, p[1]),
+                    };
+                }
+
+                const ret = try alloc.dupe(u8, spec.ret);
+                errdefer alloc.free(ret);
+
+                const doc: ?[]const u8 = if (spec.doc.len > 0) try alloc.dupe(u8, spec.doc) else null;
+                errdefer if (doc) |d| alloc.free(d);
+
+                return .{
+                    .name = name,
+                    .params = params,
+                    .return_type = ret,
+                    .doc = doc,
+                    .active_param = call_info.active_param,
+                };
+            }
+            return null;
+        }
         const def = try self.bestLocation(alloc, call_info.name, id, pos, opts) orelse return null;
         _ = try self.inspectDetailed(alloc, def.file_id, opts);
 

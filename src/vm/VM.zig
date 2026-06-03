@@ -562,6 +562,63 @@ pub fn setGlobal(self: *VM, name: []const u8, val: Data) !void {
     try self.globals.put(id, val);
 }
 
+//
+// stdlib reg
+//
+
+/// install a native fn on the heap. name fills the function's name
+/// field (stack traces, mt keys)
+pub fn installNative(self: *VM, name: []const u8, func: revo.std_lib.NativeFunc) !mem.FunctionID {
+    var f = func;
+    f.name = name;
+    return self.functions.create(.{ .native = f });
+}
+
+/// register a function as a global. also records in stdlib_globals so
+/// repl reset can replay the same set
+pub fn registerGlobal(self: *VM, name: []const u8, fn_id: mem.FunctionID) !void {
+    const atom = try self.internAtom(name);
+    const val = Data.new.function(fn_id);
+    try self.globals.put(atom, val);
+    try self.stdlib_globals.put(atom, val);
+}
+
+/// get or create a module table and install it as a global
+pub fn ensureModule(self: *VM, name: []const u8) !mem.TableID {
+    const atom = try self.internAtom(name);
+    if (self.globals.get(atom)) |existing| {
+        if (existing.asTable()) |tid| return tid;
+    }
+    const tid = try self.tables.create();
+    const val = Data.new.table(tid);
+    try self.globals.put(atom, val);
+    try self.stdlib_globals.put(atom, val);
+    return tid;
+}
+
+/// put a function into a table under an interned name
+pub fn putInTable(
+    self: *VM,
+    table_id: mem.TableID,
+    name: []const u8,
+    fn_id: mem.FunctionID,
+) !void {
+    const atom = try self.internAtom(name);
+    const t = try self.tables.get(table_id);
+    try t.putRaw(Data.new.atom(atom), Data.new.function(fn_id));
+}
+
+/// same as putInTable but the key is an already-resolved core atom
+pub fn putInTableAtom(
+    self: *VM,
+    table_id: mem.TableID,
+    atom: mem.AtomID,
+    fn_id: mem.FunctionID,
+) !void {
+    const t = try self.tables.get(table_id);
+    try t.putRaw(Data.new.atom(atom), Data.new.function(fn_id));
+}
+
 pub fn seedBootstrapGlobals(self: *VM, target: *Globals) !void {
     var it = self.stdlib_globals.iterator();
     while (it.next()) |entry| {

@@ -486,5 +486,3 @@ fn symbolKindToLsp(kind: ws.SymbolKind) T.SymbolKind {
         .type_alias => .Class,
     };
 }
-
-

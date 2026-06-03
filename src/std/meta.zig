@@ -1,11 +1,3 @@
-const revo = @import("../root.zig");
-const std_lib = @import("root.zig");
-const testing = revo.lang.testing;
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = std_lib.NativeResult;
-
 // debug flags
 pub fn set_debug(args: []const Data, vm: *VM) !NativeResult {
     const table_id = args[0].asTable() orelse return .errType(0, "table", std_lib.dataToString(args[0]));
@@ -46,3 +38,10 @@ fn check_field(name: []const u8, table: *revo.table.Table, vm: *VM) !bool {
 test "all lens" {
     try testing.top_number("len({ 1, 2, 3, 8 }) + len(\"asdf\")", 8);
 }
+
+const revo = @import("../root.zig");
+const testing = revo.lang.testing;
+const Data = revo.Data;
+const VM = revo.VM;
+const std_lib = @import("root.zig");
+const NativeResult = std_lib.NativeResult;

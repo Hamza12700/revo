@@ -3,46 +3,325 @@ const std = @import("std");
 const revo = @import("../root.zig");
 const mem = revo.memory;
 const vm_path = revo.path_utils;
+const meta = @import("meta.zig");
 
 const Data = mem.Data;
 const VM = revo.VM;
 const testing = revo.lang.testing;
 
+pub const api = @import("api.zig");
+
+pub const root_specs: []const api.FnSpec = &.{
+    .{
+        .name = "fmt",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "format", "string" },
+            .{ "args", "any..." },
+        },
+        .ret = "string",
+        .doc = "format string with %v, %d, %? specifiers",
+        .variadic = true,
+        .f = defineVariadic(&[_]TypeSpec{.string}, fmt),
+    },
+    .{
+        .name = "len",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "number|nil",
+        .doc = "returns length of string or table",
+        .f = define(&[_]TypeSpec{.any}, len_),
+    },
+    .{
+        .name = "inspect",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "any",
+        .doc = "prints one value and returns it back",
+        .f = define(&[_]TypeSpec{.any}, inspect),
+    },
+    .{
+        .name = "get_metatable",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "table|atom",
+        .doc = "returns metatable of value or :missing",
+        .f = define(&[_]TypeSpec{.any}, meta.get_metatable_),
+    },
+    .{
+        .name = "set_metatable",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+            .{ "meta", "table|nil" },
+        },
+        .ret = "any",
+        .doc = "sets metatable of value",
+        .f = define(&[_]TypeSpec{ .any, .any }, meta.set_metatable_),
+    },
+    .{
+        .name = "type",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "atom",
+        .doc = "returns type of value as atom",
+        .f = define(&[_]TypeSpec{.any}, typeof_),
+    },
+    .{
+        .name = "typeof",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "atom",
+        .doc = "returns type of value as atom",
+        .f = define(&[_]TypeSpec{.any}, typeof_),
+    },
+    .{
+        .name = "tostring",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "string",
+        .doc = "converts value to string",
+        .f = define(&[_]TypeSpec{.any}, tostring),
+    },
+    .{
+        .name = "tonumber",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "(:ok, number) | (:err, string)",
+        .doc = "converts value to number",
+        .f = define(&[_]TypeSpec{.any}, tonumber),
+    },
+    .{
+        .name = "expect",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "(:ok, any) | (:err, :ExpectFailed)",
+        .doc = "used in tests, returns value or :err",
+        .f = define(&[_]TypeSpec{.any}, expect),
+    },
+    .{
+        .name = "expect_eq",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "a", "any" },
+            .{ "b", "any" },
+        },
+        .ret = "(:ok, any) | (:err, :NotEqual)",
+        .doc = "panics if values are not equal",
+        .f = define(&[_]TypeSpec{ .any, .any }, expect_eq),
+    },
+    .{
+        .name = "assert",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "any",
+        .doc = "panics if value is falsy",
+        .f = define(&[_]TypeSpec{.any}, assert_),
+    },
+    .{
+        .name = "assert_eq",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "a", "any" },
+            .{ "b", "any" },
+        },
+        .ret = "any",
+        .doc = "panics if values are not equal",
+        .f = define(&[_]TypeSpec{ .any, .any }, assert_eq),
+    },
+    .{
+        .name = "set_debug",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "flags", "table" },
+        },
+        .ret = ":ok",
+        .doc = "sets debug flags from a table",
+        .f = define(&[_]TypeSpec{.table}, meta.set_debug),
+    },
+    .{ .name = "debug", .placements = &.{api.g}, .params = &.{}, .ret = "table", .doc = "returns debug info as a table", .f = define(&[_]TypeSpec{}, debug_) },
+    .{
+        .name = "@range",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "start", "number" },
+            .{ "step", "number" },
+            .{ "stop", "number" },
+        },
+        .ret = "tuple",
+        .doc = "creates a range tuple (start, step, stop)",
+        .f = define(&[_]TypeSpec{ .number, .number, .number }, range_),
+    },
+    .{
+        .name = "@range_from",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "start", "number" },
+            .{ "step", "number" },
+        },
+        .ret = "tuple",
+        .doc = "creates a range tuple (start, step) without stop",
+        .f = define(&[_]TypeSpec{ .number, .number }, range_from_),
+    },
+    .{
+        .name = "unwrap",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "result", "tuple" },
+        },
+        .ret = "any",
+        .doc = "unwraps result tuple, panics if not :ok",
+        .f = define(&[_]TypeSpec{.tuple}, try_),
+    },
+    .{
+        .name = "@dotest",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "name", "string" },
+            .{ "body", "function" },
+        },
+        .ret = ":ok",
+        .doc = "internal, do not use unless you know what you're doing. runs a test",
+        .f = define(&[_]TypeSpec{ .string, .function }, dotest),
+    },
+    .{
+        .name = "@dosuite",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "name", "string" },
+            .{ "body", "function" },
+        },
+        .ret = ":ok",
+        .doc = "internal, pls dont use. runs a test suite",
+        .f = define(&[_]TypeSpec{ .string, .function }, dosuite),
+    },
+    .{
+        .name = "chan",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "capacity", "number?" },
+        },
+        .ret = "tuple",
+        .doc = "creates a new channel with optional buffer size",
+        .variadic = true,
+        .f = defineVariadic(&[_]TypeSpec{}, chan_new),
+    },
+    .{
+        .name = "send",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "chan", "tuple" },
+            .{ "value", "any" },
+        },
+        .ret = ":ok",
+        .doc = "sends value to channel",
+        .f = define(&[_]TypeSpec{ .tuple, .any }, chan_send),
+    },
+    .{
+        .name = "recv",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "chan", "tuple" },
+        },
+        .ret = "any",
+        .doc = "receives value from channel, parks if empty",
+        .f = define(&[_]TypeSpec{.tuple}, chan_recv),
+    },
+    .{
+        .name = "sleep",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "ms", "number" },
+        },
+        .ret = "parked",
+        .doc = "sleeps current fiber for given milliseconds",
+        .f = define(&[_]TypeSpec{.number}, sleep),
+    },
+    .{
+        .name = "print",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "args", "any..." },
+        },
+        .ret = ":ok",
+        .doc = "prints values to stdout with space separator",
+        .variadic = true,
+        .f = defineVariadic(&[_]TypeSpec{}, print),
+    },
+    .{
+        .name = "panic",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "args", "any..." },
+        },
+        .ret = "never",
+        .doc = "panics with given message",
+        .variadic = true,
+        .f = defineVariadic(&[_]TypeSpec{}, panic_),
+    },
+    .{
+        .name = "c_use",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "path", "string" },
+        },
+        .ret = "nil",
+        .doc = "loads a C extension lib and registers its functions",
+        .f = define(&[_]TypeSpec{.string}, cload),
+    },
+    .{
+        .name = "read",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "opts", "table?" },
+        },
+        .ret = "(:ok, string) | (:err, string)",
+        .doc = "reads from stdin or a path",
+        .variadic = true,
+        .f = defineVariadic(&[_]TypeSpec{}, read),
+    },
+    .{ .name = "cwd", .placements = &.{api.g}, .params = &.{}, .ret = "string", .doc = "returns current working directory path", .f = define(&[_]TypeSpec{}, cwd) },
+    .{
+        .name = "system",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "args", "table" },
+        },
+        .ret = "(:stdout, :stderr)",
+        .doc = "runs a subprocess and returns (stdout, stderr)",
+        .f = define(&[_]TypeSpec{.table}, system_),
+    },
+    .{
+        .name = "import",
+        .placements = &.{api.g},
+        .params = &.{
+            .{ "path", "string" },
+        },
+        .ret = "any",
+        .doc = "imports a revo module by path",
+        .f = define(&[_]TypeSpec{.string}, import),
+    },
+};
+
 pub fn register_stdlib(vm: *revo.VM) !void {
-    const meta = @import("meta.zig");
-    try registerFunctions(vm, &[_]FuncDef{
-        .{ .name = "fmt", .f = defineVariadic(&[_]TypeSpec{.string}, fmt) },
-        .{ .name = "len", .f = define(&[_]TypeSpec{.any}, len_) },
-        .{ .name = "inspect", .f = define(&[_]TypeSpec{.any}, inspect) },
-        .{ .name = "get_metatable", .f = define(&[_]TypeSpec{.any}, meta.get_metatable_) },
-        .{ .name = "set_metatable", .f = define(&[_]TypeSpec{ .any, .any }, meta.set_metatable_) },
-        .{ .name = "type", .f = define(&[_]TypeSpec{.any}, typeof_) },
-        .{ .name = "typeof", .f = define(&[_]TypeSpec{.any}, typeof_) },
-        .{ .name = "tostring", .f = define(&[_]TypeSpec{.any}, tostring) },
-        .{ .name = "tonumber", .f = define(&[_]TypeSpec{.any}, tonumber) },
-        .{ .name = "expect", .f = define(&[_]TypeSpec{.any}, expect) },
-        .{ .name = "expect_eq", .f = define(&[_]TypeSpec{ .any, .any }, expect_eq) },
-        .{ .name = "assert", .f = define(&[_]TypeSpec{.any}, assert_) },
-        .{ .name = "assert_eq", .f = define(&[_]TypeSpec{ .any, .any }, assert_eq) },
-        .{ .name = "set_debug", .f = define(&[_]TypeSpec{.table}, meta.set_debug) },
-        .{ .name = "debug", .f = define(&[_]TypeSpec{}, debug_) },
-        .{ .name = "@range", .f = define(&[_]TypeSpec{ .number, .number, .number }, range_) },
-        .{ .name = "@range_from", .f = define(&[_]TypeSpec{ .number, .number }, range_from_) },
-        .{ .name = "unwrap", .f = define(&[_]TypeSpec{.tuple}, try_) },
-        .{ .name = "@dotest", .f = define(&[_]TypeSpec{ .string, .function }, dotest) },
-        .{ .name = "@dosuite", .f = define(&[_]TypeSpec{ .string, .function }, dosuite) },
-        .{ .name = "chan", .f = defineVariadic(&[_]TypeSpec{}, chan_new) },
-        .{ .name = "send", .f = define(&[_]TypeSpec{ .tuple, .any }, chan_send) },
-        .{ .name = "recv", .f = define(&[_]TypeSpec{.tuple}, chan_recv) },
-        .{ .name = "sleep", .f = define(&[_]TypeSpec{.number}, sleep) },
-        .{ .name = "print", .f = defineVariadic(&[_]TypeSpec{}, print) },
-        .{ .name = "panic", .f = defineVariadic(&[_]TypeSpec{}, panic_) },
-        .{ .name = "c_use", .f = define(&[_]TypeSpec{.string}, cload) },
-        .{ .name = "read", .f = defineVariadic(&[_]TypeSpec{}, read) },
-        .{ .name = "cwd", .f = define(&[_]TypeSpec{}, cwd) },
-        .{ .name = "system", .f = define(&[_]TypeSpec{.table}, system_) },
-        .{ .name = "import", .f = define(&[_]TypeSpec{.string}, import) },
-    });
     const argv_id = try vm.tables.create();
     const argv = try vm.tables.get(argv_id);
     for (vm.runtime.argv) |arg| {
@@ -51,19 +330,43 @@ pub fn register_stdlib(vm: *revo.VM) !void {
     const argv_val = Data.new.table(argv_id);
     try vm.globals.put(try vm.internAtom("argv"), argv_val);
     try vm.stdlib_globals.put(try vm.internAtom("argv"), argv_val);
-    // math
-    try @import("math.zig").register(vm);
-    try @import("stupid.zig").register(vm);
-    try @import("string.zig").register(vm);
-    try @import("table.zig").register(vm);
-    try @import("net.zig").register(vm);
-    try @import("json.zig").register(vm);
-    try @import("time.zig").register(vm);
-    // try @import("meta.zig").comparison_mt.register(vm);
-    try @import("tuple.zig").register(vm);
-    try @import("iter.zig").register(vm);
-    try @import("fs.zig").register(vm);
+
+    // later specs merge into earlier metatables, not overwrite
+    const all = [_][]const api.FnSpec{
+        root_specs,
+        @import("string.zig").specs,
+        @import("table.zig").specs,
+        @import("tuple.zig").specs,
+        @import("iter.zig").specs,
+        @import("math.zig").specs,
+        @import("json.zig").specs,
+        @import("time.zig").specs,
+        @import("net.zig").specs,
+        @import("fs.zig").specs,
+        @import("revo.zig").specs,
+    };
+    try api.registerAll(vm, &all, mtPrototype);
+
+    try attachMathPi(vm);
     try typeUtils(vm);
+}
+
+fn attachMathPi(vm: *revo.VM) !void {
+    if (vm.globals.get(try vm.internAtom("math"))) |t| {
+        if (t.asTable()) |table_id| {
+            const table = try vm.tables.get(table_id);
+            try table.putRaw(Data.new.atom(try vm.internAtom("pi")), Data.new.num(std.math.pi));
+        }
+    }
+}
+
+fn mtPrototype(target: TypeSpec, vm: *revo.VM) !Data {
+    return switch (target) {
+        .string => try vm.ownDataString(""),
+        .tuple => Data.new.tuple(std.math.maxInt(usize)),
+        .table => Data.new.table(std.math.maxInt(usize)),
+        else => return error.UnsupportedTarget,
+    };
 }
 
 pub const NativeFn = *const fn (args: []const Data, vm: *VM) anyerror!NativeResult;
@@ -98,8 +401,6 @@ pub fn defineVariadic(
         .func = impl,
     };
 }
-
-pub const FuncDef = struct { f: NativeFunc, name: []const u8 };
 
 pub const ResultTag = enum { ok, err };
 
@@ -174,31 +475,6 @@ pub fn tupleTag(value: Data, vm: *VM) ?mem.AtomID {
 
 pub fn isResultTag(value: Data, expected: mem.AtomID, vm: *VM) bool {
     return tupleTag(value, vm) == expected;
-}
-
-pub fn registerFunctions(vm: *VM, funcs: []const FuncDef) !void {
-    for (funcs) |f| {
-        var func = f.f;
-        func.name = f.name;
-        const id = try vm.functions.create(.{ .native = func });
-        const atom = try vm.internAtom(f.name);
-        const val = Data.new.function(id);
-        try vm.globals.put(atom, val);
-        try vm.stdlib_globals.put(atom, val);
-    }
-}
-
-pub fn registerTableFunctions(vm: *VM, table_name: []const u8, funcs: []const FuncDef) !void {
-    const t_id = try vm.tables.create();
-    const atom = try vm.internAtom(table_name);
-    const val = Data.new.table(t_id);
-    try vm.globals.put(atom, val);
-    try vm.stdlib_globals.put(atom, val);
-    const t = try vm.tables.get(t_id);
-    for (funcs) |f| {
-        const fn_id = try vm.functions.create(.{ .native = f.f });
-        try t.putRaw(Data.new.atom(try vm.internAtom(f.name)), Data.new.function(fn_id));
-    }
 }
 
 /// > fmt(format: string, args: any...) -> string
@@ -899,38 +1175,6 @@ pub fn sleep(args: []const Data, vm: *VM) !NativeResult {
     };
     try vm.schedParkCurrentForSleepMS(ms);
     return .parked();
-}
-
-// metatable registration
-pub const MethodKey = union(enum) {
-    named: []const u8,
-    core: revo.core_atoms,
-};
-
-pub const MethodDef = struct {
-    key: MethodKey,
-    func: NativeFunc,
-};
-
-pub fn registerMetatable(
-    vm: *VM,
-    comptime methods: []const MethodDef,
-    prototype: Data,
-) !void {
-    const mt_id = try vm.tables.create();
-    const mt = try vm.tables.get(mt_id);
-    inline for (methods) |method| {
-        var func = method.func;
-        if (method.key == .named) func.name = method.key.named;
-
-        const fn_id = try vm.functions.create(.{ .native = func });
-        const key_atom = switch (method.key) {
-            .named => |name| try vm.internAtom(name),
-            .core => |atom| revo.core_atoms.atom_id(atom),
-        };
-        try mt.putRaw(Data.new.atom(key_atom), Data.new.function(fn_id));
-    }
-    try vm.setMetatable(prototype, mt_id);
 }
 
 pub const NativeErrPayload = union(enum) {

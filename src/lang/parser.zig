@@ -1199,11 +1199,12 @@ const Parser = struct {
         var items = try std.ArrayList(*Node).initCapacity(self.alloc, 2);
         errdefer items.deinit(self.alloc);
 
-        while (!self.check(terminator)) {
+        while (!self.check(terminator) and !self.check(.eof)) {
             const item = self.parseExpression(0) catch |err| switch (err) {
                 error.UnexpectedToken, error.ExpectedIdentifier, error.ExpectedMatchArm => {
                     try self.recordSyntaxError(err, self.peek());
                     self.syncToNextStatement(terminator);
+                    if (self.check(.eof)) break;
                     continue;
                 },
                 else => return err,

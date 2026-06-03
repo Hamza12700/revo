@@ -1,22 +1,33 @@
-//
 // for metaprogramming
-//
 
-const revo = @import("../root.zig");
-const testing = revo.lang.testing;
-const root = @import("root.zig");
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
-const dataToString = root.dataToString;
-
-pub fn register(vm: *VM) !void {
-    try root.registerTableFunctions(vm, "revo", &[_]root.FuncDef{
-        .{ .name = "eval", .f = root.define(&.{.string}, eval) },
-        .{ .name = "build", .f = root.define(&.{.string}, build) },
-    });
-}
+pub const specs: []const api.FnSpec = &.{
+    .{
+        .name = "eval",
+        .placements = &.{api.mod("revo")},
+        .params = &.{
+            .{ "code", "string" },
+        },
+        .ret = "(:ok, any) | (:err, string)",
+        .doc =
+        \\evaluates it as a module, gives you back its' return value
+        \\you can treat it as a function's body
+        ,
+        .f = root.define(&.{.string}, eval),
+    },
+    .{
+        .name = "build",
+        .placements = &.{api.mod("revo")},
+        .params = &.{
+            .{ "code", "string" },
+        },
+        .ret = "(:ok, string) | (:err, string)",
+        .doc =
+        \\builds it as a module, gives you back its' bytecode in a string
+        \\the string is only useful for writing to a file or executing
+        ,
+        .f = root.define(&.{.string}, build),
+    },
+};
 
 /// > eval(code: string) -> !any
 /// evaluates it as a module, gives you back its' return value
@@ -80,3 +91,14 @@ test "native eval works" {
         \\ res
     , 42);
 }
+
+const std = @import("std");
+
+const revo = @import("../root.zig");
+const testing = revo.lang.testing;
+const Data = revo.Data;
+const VM = revo.VM;
+const api = @import("api.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;
+const dataToString = root.dataToString;

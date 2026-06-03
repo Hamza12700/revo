@@ -1,6 +1,7 @@
 const std = @import("std");
 const revo = @import("../root.zig");
 const root = @import("root.zig");
+const api = @import("api.zig");
 
 const Data = revo.Data;
 const VM = revo.VM;
@@ -8,12 +9,28 @@ const NativeResult = root.NativeResult;
 
 const json = std.json;
 
-pub fn register(vm: *VM) !void {
-    try root.registerTableFunctions(vm, "json", &[_]root.FuncDef{
-        .{ .name = "encode", .f = root.define(&.{.any}, encode) },
-        .{ .name = "decode", .f = root.define(&.{.string}, decode) },
-    });
-}
+pub const specs: []const api.FnSpec = &.{
+    .{
+        .name = "encode",
+        .placements = &.{api.mod("json")},
+        .params = &.{
+            .{ "value", "any" },
+        },
+        .ret = "(:ok, string) | (:err, string)",
+        .doc = "encodes value as json string",
+        .f = root.define(&.{.any}, encode),
+    },
+    .{
+        .name = "decode",
+        .placements = &.{api.mod("json")},
+        .params = &.{
+            .{ "source", "string" },
+        },
+        .ret = "(:ok, any) | (:err, string)",
+        .doc = "decodes json string into revo value",
+        .f = root.define(&.{.string}, decode),
+    },
+};
 
 fn encode(args: []const Data, vm: *VM) !NativeResult {
     var out = std.Io.Writer.Allocating.init(vm.runtime.alloc);

@@ -1,46 +1,14 @@
-const std = @import("std");
-const revo = @import("../root.zig");
-const root = @import("root.zig");
-const testing = revo.lang.testing;
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
-const dataToString = root.dataToString;
-
 // zig fmt: off
 const MathOps = struct {
-    /// returns absolute value
-    /// > math.abs(x: number) -> number
     pub fn abs(x: f64) f64 { return @abs(x); }
-    /// returns floor of x
-    /// > math.floor(x: number) -> number
     pub fn floor(x: f64) f64 { return @floor(x); }
-    /// returns ceiling of x
-    /// > math.ceil(x: number) -> number
     pub fn ceil(x: f64) f64 { return @ceil(x); }
-    /// returns square root
-    /// errors if x is negative
-    /// > math.sqrt(x: number) -> number
     pub fn sqrt(x: f64) f64 { return @sqrt(x); }
-    /// returns base raised to exponent
-    /// > math.pow(base: number, exponent: number) -> number
     pub fn pow(base: f64, exponent: f64) f64 { return std.math.pow(f64, base, exponent); }
-    /// returns sine of x (x in radians)
-    /// > math.sin(x: number) -> number
     pub fn sin(x: f64) f64 { return @sin(x); }
-    /// returns cosine of x (x in radians)
-    /// > math.cos(x: number) -> number
     pub fn cos(x: f64) f64 { return @cos(x); }
-    /// returns tangent of x (x in radians)
-    /// > math.tan(x: number) -> number
     pub fn tan(x: f64) f64 { return @tan(x); }
-    /// returns natural logarithm
-    /// errors if x <= 0
-    /// > math.log(x: number) -> number
     pub fn log(x: f64) f64 { return @log(x); }
-    /// returns e raised to x
-    /// > math.exp(x: number) -> number
     pub fn exp(x: f64) f64 { return @exp(x); }
 };
 
@@ -55,15 +23,19 @@ const Pred = struct {
 //
 // generators
 //
-fn makeUnary(comptime op: fn (f64) f64) type {
+fn makeUnary(comptime op: fn (f64) f64) root.NativeFn {
     return struct {
         fn apply(args: []const Data, _: *VM) !NativeResult {
             return .{ .ok = Data.new.num(op(toF64(args[0]))) };
         }
-    };
+    }.apply;
 }
 
-fn makeUnaryChecked(comptime op: fn (f64) f64, comptime check: fn (f64) bool, comptime expected: []const u8) type {
+fn makeUnaryChecked(
+    comptime op: fn (f64) f64,
+    comptime check: fn (f64) bool,
+    comptime expected: []const u8,
+) root.NativeFn {
     return struct {
         fn apply(args: []const Data, _: *VM) !NativeResult {
             const n = toF64(args[0]);
@@ -71,18 +43,18 @@ fn makeUnaryChecked(comptime op: fn (f64) f64, comptime check: fn (f64) bool, co
                 return .errType(0, expected, dataToString(args[0]));
             return .{ .ok = Data.new.num(op(n)) };
         }
-    };
+    }.apply;
 }
 
-fn makeBinary(comptime op: fn (f64, f64) f64) type {
+fn makeBinary(comptime op: fn (f64, f64) f64) root.NativeFn {
     return struct {
         fn apply(args: []const Data, _: *VM) !NativeResult {
             return .{ .ok = Data.new.num(op(toF64(args[0]), toF64(args[1]))) };
         }
-    };
+    }.apply;
 }
 
-fn makeVariadic(comptime cmp: fn (f64, f64) bool) type {
+fn makeVariadic(comptime cmp: fn (f64, f64) bool) root.NativeFn {
     return struct {
         /// returns min or max of all arguments
         fn apply(args: []const Data, _: *VM) !NativeResult {
@@ -93,33 +65,134 @@ fn makeVariadic(comptime cmp: fn (f64, f64) bool) type {
             }
             return .{ .ok = Data.new.num(res) };
         }
-    };
+    }.apply;
 }
 
-pub fn register(vm: *VM) !void {
-    const funcs = [_]root.FuncDef{
-        .{ .name = "abs", .f = root.define(&.{.number}, makeUnary(MathOps.abs).apply) },
-        .{ .name = "floor", .f = root.define(&.{.number}, makeUnary(MathOps.floor).apply) },
-        .{ .name = "ceil", .f = root.define(&.{.number}, makeUnary(MathOps.ceil).apply) },
-        .{ .name = "sqrt", .f = root.define(&.{.number}, makeUnaryChecked(MathOps.sqrt, Pred.nonNegative, "non-negative number").apply) },
-        .{ .name = "pow", .f = root.define(&.{ .number, .number }, makeBinary(MathOps.pow).apply) },
-        .{ .name = "min", .f = root.defineVariadic(&.{.number}, makeVariadic(Pred.less).apply) }, // > math.min(args: number...) -> number
-        .{ .name = "max", .f = root.defineVariadic(&.{.number}, makeVariadic(Pred.greater).apply) }, // > math.max(args: number...) -> number
-        .{ .name = "sin", .f = root.define(&.{.number}, makeUnary(MathOps.sin).apply) },
-        .{ .name = "cos", .f = root.define(&.{.number}, makeUnary(MathOps.cos).apply) },
-        .{ .name = "tan", .f = root.define(&.{.number}, makeUnary(MathOps.tan).apply) },
-        .{ .name = "log", .f = root.define(&.{.number}, makeUnaryChecked(MathOps.log, Pred.positive, "positive number").apply) },
-        .{ .name = "exp", .f = root.define(&.{.number}, makeUnary(MathOps.exp).apply) },
-    };
-    try root.registerTableFunctions(vm, "math", &funcs);
-
-    if (vm.globals.get(try vm.internAtom("math"))) |t| {
-        if (t.asTable()) |table_id| {
-            const table = try vm.tables.get(table_id);
-            try table.putRaw(Data.new.atom(try vm.internAtom("pi")), Data.new.num(std.math.pi));
-        }
-    }
-}
+pub const specs: []const api.FnSpec = &.{
+    .{
+        .name = "abs",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "absolute value",
+        .f = root.define(&.{.number}, makeUnary(MathOps.abs)),
+    },
+    .{
+        .name = "floor",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "floor of x",
+        .f = root.define(&.{.number}, makeUnary(MathOps.floor)),
+    },
+    .{
+        .name = "ceil",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "ceiling of x",
+        .f = root.define(&.{.number}, makeUnary(MathOps.ceil)),
+    },
+    .{
+        .name = "sqrt",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "square root, errors if x is negative",
+        .f = root.define(&.{.number}, makeUnaryChecked(MathOps.sqrt, Pred.nonNegative, "non-negative number")),
+    },
+    .{
+        .name = "pow",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "base", "number" },
+            .{ "exponent", "number" },
+        },
+        .ret = "number",
+        .doc = "base raised to exponent",
+        .f = root.define(&.{ .number, .number }, makeBinary(MathOps.pow)),
+    },
+    .{
+        .name = "min",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "args", "number..." },
+        },
+        .ret = "number",
+        .doc = "min of all arguments",
+        .variadic = true,
+        .f = root.defineVariadic(&.{.number}, makeVariadic(Pred.less)),
+    },
+    .{
+        .name = "max",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "args", "number..." },
+        },
+        .ret = "number",
+        .doc = "max of all arguments",
+        .variadic = true,
+        .f = root.defineVariadic(&.{.number}, makeVariadic(Pred.greater)),
+    },
+    .{
+        .name = "sin",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "sine of x (x in radians)",
+        .f = root.define(&.{.number}, makeUnary(MathOps.sin)),
+    },
+    .{
+        .name = "cos",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "cosine of x (x in radians)",
+        .f = root.define(&.{.number}, makeUnary(MathOps.cos)),
+    },
+    .{
+        .name = "tan",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "tangent of x (x in radians)",
+        .f = root.define(&.{.number}, makeUnary(MathOps.tan)),
+    },
+    .{
+        .name = "log",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "natural logarithm, panics if x <= 0",
+        .f = root.define(&.{.number}, makeUnaryChecked(MathOps.log, Pred.positive, "positive number")),
+    },
+    .{
+        .name = "exp",
+        .placements = &.{api.mod("math")},
+        .params = &.{
+            .{ "x", "number" },
+        },
+        .ret = "number",
+        .doc = "e raised to x",
+        .f = root.define(&.{.number}, makeUnary(MathOps.exp)),
+    },
+};
 
 test "math library" {
     try testing.top_number("math.abs(-5)", 5);
@@ -136,3 +209,14 @@ test "math library" {
 inline fn toF64(d: Data) f64 {
     return d.asNum().?;
 }
+
+const std = @import("std");
+
+const revo = @import("../root.zig");
+const testing = revo.lang.testing;
+const Data = revo.Data;
+const VM = revo.VM;
+const api = @import("api.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;
+const dataToString = root.dataToString;

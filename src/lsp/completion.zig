@@ -99,9 +99,21 @@ fn addGeneralCompletions(
                 .Struct
             else
                 .Variable;
+            const doc: ?[]const u8 = if (entry.value_ptr.isFunction())
+                if (revo.std_lib.api.find(name)) |spec|
+                    if (spec.doc.len > 0) spec.doc else null
+                else
+                    null
+            else
+                null;
+            const doc_copy: ?[]const u8 = if (doc) |d| arena.dupe(u8, d) catch null else null;
             items.append(arena, .{
                 .label = name,
                 .kind = kind,
+                .documentation = if (doc_copy) |d|
+                    .{ .markup_content = .{ .kind = .markdown, .value = d } }
+                else
+                    null,
             }) catch return;
         }
     }

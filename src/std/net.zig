@@ -1,13 +1,72 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const revo = @import("../root.zig");
-const root = @import("root.zig");
-const meta = @import("meta.zig");
-const Scheduler = revo.vm.Scheduler;
-
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
+pub const specs: []const api.FnSpec = &.{
+    // net module
+    .{
+        .name = "connect",
+        .placements = &.{api.mod("net")},
+        .params = &.{
+            .{ "host", "string" },
+            .{ "port", "number" },
+        },
+        .ret = "(:ok, table) | (:err, atom)",
+        .doc = "connects to a remote host and port, returns a socket handle",
+        .f = root.define(&.{ .string, .number }, connect_fn),
+    },
+    .{
+        .name = "listen",
+        .placements = &.{api.mod("net")},
+        .params = &.{
+            .{ "port", "number" },
+            .{ "backlog", "number?" },
+        },
+        .ret = "(:ok, table) | (:err, atom)",
+        .doc = "listens for incoming connections on the given port, returns server socket",
+        .variadic = true,
+        .f = root.defineVariadic(&.{.number}, listen_fn),
+    },
+    // socket module (used as __index for socket handle mts)
+    .{
+        .name = "accept",
+        .placements = &.{api.mod("socket")},
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "(:ok, table) | (:err, atom)",
+        .doc = "accepts an incoming client connection on a server socket",
+        .f = root.define(&.{.table}, accept_fn),
+    },
+    .{
+        .name = "send",
+        .placements = &.{api.mod("socket")},
+        .params = &.{
+            .{ "self", "table" },
+            .{ "data", "string" },
+        },
+        .ret = "(:ok, number) | (:err, atom)",
+        .doc = "sends data over the socket, returns number of bytes sent",
+        .f = root.define(&.{ .table, .string }, send_fn),
+    },
+    .{
+        .name = "recv",
+        .placements = &.{api.mod("socket")},
+        .params = &.{
+            .{ "self", "table" },
+            .{ "opts", "table" },
+        },
+        .ret = "(:ok, string) | (:err, atom)",
+        .doc = "receives data according to opts.mode (:read_some | :read_all | :read_line)",
+        .f = root.define(&.{ .table, .table }, recv),
+    },
+    .{
+        .name = "close",
+        .placements = &.{api.mod("socket")},
+        .params = &.{
+            .{ "self", "table" },
+        },
+        .ret = "(:ok, atom) | (:err, atom)",
+        .doc = "closes the socket",
+        .f = root.define(&.{.table}, socket_close_fn),
+    },
+};
 
 pub const SocketEntry = union(enum) {
     stream: StreamEntry,
@@ -247,19 +306,6 @@ fn onAcceptReady(vm: *VM, waiter: *Scheduler.WaitEntry, _: i16) !Scheduler.IoDis
         },
     };
     return try completeWaiter(vm, waiter, .ok, try wrapSocket(vm, new_entry_ptr, false));
-}
-
-pub fn register(vm: *VM) !void {
-    try root.registerTableFunctions(vm, "net", &[_]root.FuncDef{
-        .{ .name = "connect", .f = root.define(&.{ .string, .number }, connect_fn) },
-        .{ .name = "listen", .f = root.defineVariadic(&.{.number}, listen_fn) },
-    });
-    try root.registerTableFunctions(vm, "socket", &[_]root.FuncDef{
-        .{ .name = "accept", .f = root.define(&.{.table}, accept_fn) },
-        .{ .name = "send", .f = root.define(&.{ .table, .string }, send_fn) },
-        .{ .name = "recv", .f = root.define(&.{ .table, .table }, recv) },
-        .{ .name = "close", .f = root.define(&.{.table}, socket_close_fn) },
-    });
 }
 
 // poll io waiters, poll and wake fibers
@@ -759,3 +805,15 @@ fn socket_close_fn(args: []const Data, vm: *VM) !NativeResult {
     try closeEntry(socket_data, vm);
     return try .Ok(vm, revo.core_atoms.data(.nil));
 }
+
+const std = @import("std");
+const builtin = @import("builtin");
+
+const revo = @import("../root.zig");
+const Scheduler = revo.vm.Scheduler;
+const Data = revo.Data;
+const VM = revo.VM;
+const api = @import("api.zig");
+const meta = @import("meta.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;

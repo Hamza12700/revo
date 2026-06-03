@@ -1,25 +1,136 @@
-const std = @import("std");
-const revo = @import("../root.zig");
-const root = @import("root.zig");
+/// every iter entry is registered in 4 places rn:
+///   - global function
+///   - string metatable
+///   - tuple metatable
+///   - table metatable
+/// this is by design, even the "not giving them a whole iter module" part
+const places: []const api.Placement = &.{
+    api.g,
+    api.method("string", .string),
+    api.method("tuple", .tuple),
+    api.method("table", .table),
+};
 
-const Data = revo.Data;
-const VM = revo.VM;
-const NativeResult = root.NativeResult;
-const dataToString = root.dataToString;
-
-pub fn register(vm: *VM) !void {
-    // as globals
-    try root.registerFunctions(vm, &[_]root.FuncDef{
-        .{ .name = "map", .f = root.define(&.{ .any, .function }, map_fn) },
-        .{ .name = "filter", .f = root.define(&.{ .any, .function }, filter_fn) },
-        .{ .name = "reduce", .f = root.define(&.{ .any, .function, .any }, reduce_fn) },
-        .{ .name = "each", .f = root.define(&.{ .any, .function }, each_fn) },
-        .{ .name = "find", .f = root.define(&.{ .any, .function }, find_fn) },
-        .{ .name = "all?", .f = root.define(&.{ .any, .function }, all_fn) },
-        .{ .name = "any?", .f = root.define(&.{ .any, .function }, any_fn) },
-    });
-    // tuple mt is registered by tuple.zig and it includes iteer methods
-}
+pub const specs: []const api.FnSpec = &.{
+    .{
+        .name = "map",
+        .placements = &.{
+            api.g,
+            api.method("string", .string),
+            api.method("tuple", .tuple),
+            api.method("table", .table),
+        },
+        .params = &.{
+            .{ "collection", "any" },
+            .{ "fn", "function" },
+        },
+        .ret = "string|tuple|table",
+        .doc =
+        \\transforms each element by applying function
+        \\    map("hello", fn(c) = c:upper())
+        \\    map((1,2,3), fn(x) = x * 2)
+        \\    map({a=1, b=2}, fn(v) = v + 10)
+        ,
+        .f = root.define(&.{ .any, .function }, map_fn),
+    },
+    .{
+        .name = "filter",
+        .placements = places,
+        .params = &.{
+            .{ "collection", "any" },
+            .{ "pred", "function" },
+        },
+        .ret = "string|tuple|table",
+        .doc =
+        \\keeps only elements where function returns true
+        \\    filter("hello", fn(c) = c != "l")
+        \\    filter((1,2,3,4), fn(x) = x > 2)
+        \\    filter({a=1, b=2}, fn(v) = v > 1)
+        ,
+        .f = root.define(&.{ .any, .function }, filter_fn),
+    },
+    .{
+        .name = "reduce",
+        .placements = places,
+        .params = &.{
+            .{ "collection", "any" },
+            .{ "fn", "function" },
+            .{ "init", "any" },
+        },
+        .ret = "any",
+        .doc =
+        \\folds/accumulates elements using function and initial value
+        \\    reduce((1,2,3,4), fn(acc, x) = acc + x, 0)
+        \\    reduce("hello", fn(acc, c) = acc + 1, 0)
+        \\    reduce({a=1, b=2}, fn(acc, v) = acc + v, 0)
+        ,
+        .f = root.define(&.{ .any, .function, .any }, reduce_fn),
+    },
+    .{
+        .name = "each",
+        .placements = places,
+        .params = &.{
+            .{ "collection", "any" },
+            .{ "fn", "function" },
+        },
+        .ret = ":ok",
+        .doc =
+        \\iterates over elements, calling function for side effects, returns :ok
+        \\    each("hello", fn(c) = print(c))
+        \\    each((1,2,3), fn(x) = print(x))
+        \\    each({a=1, b=2}, fn(v) = print(v))
+        ,
+        .f = root.define(&.{ .any, .function }, each_fn),
+    },
+    .{
+        .name = "find",
+        .placements = places,
+        .params = &.{
+            .{ "what", "any" },
+            .{ "fn", "function" },
+        },
+        .ret = "any",
+        .doc =
+        \\returns first element where function returns true, or :missing if not found
+        \\    find("hello", fn(c) = c == "l")
+        \\    find((1,2,3,4), fn(x) = x > 2)
+        \\    find({a=1, b=2}, fn(v) = v > 1)
+        ,
+        .f = root.define(&.{ .any, .function }, find_fn),
+    },
+    .{
+        .name = "all?",
+        .placements = places,
+        .params = &.{
+            .{ "collection", "any" },
+            .{ "pred", "function" },
+        },
+        .ret = "boolean",
+        .doc =
+        \\returns true if function returns true for all elements
+        \\    all?((1,2,3), fn(x) = x > 0)
+        \\    all?("hello", fn(c) = c != " ")
+        \\    all?({a=1, b=2}, fn(v) = v > 0)
+        ,
+        .f = root.define(&.{ .any, .function }, all_fn),
+    },
+    .{
+        .name = "any?",
+        .placements = places,
+        .params = &.{
+            .{ "collection", "any" },
+            .{ "pred", "function" },
+        },
+        .ret = "boolean",
+        .doc =
+        \\returns true if function returns true for any element
+        \\    any?((1,2,3), fn(x) = x > 2)
+        \\    any?("hello", fn(c) = c == "l")
+        \\    any?({a=1, b=2}, fn(v) = v > 1)
+        ,
+        .f = root.define(&.{ .any, .function }, any_fn),
+    },
+};
 
 /// > map(collection: string|tuple|table, fn: function) -> string|tuple|table
 /// transforms each element by applying function
@@ -438,3 +549,13 @@ pub fn any_fn(args: []const Data, vm: *VM) !NativeResult {
 inline fn isTruthy(data: Data) bool {
     return !revo.isFalse(data);
 }
+
+const std = @import("std");
+
+const revo = @import("../root.zig");
+const Data = revo.Data;
+const VM = revo.VM;
+const api = @import("api.zig");
+const root = @import("root.zig");
+const NativeResult = root.NativeResult;
+const dataToString = root.dataToString;
