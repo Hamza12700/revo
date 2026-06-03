@@ -162,9 +162,7 @@ pub fn doIncrementalSweep(self: *VM) void {
 }
 
 pub fn processMarkStack(self: *VM) void {
-    var idx: usize = 0;
-    while (idx < self.gc_mark_stack.items.len) : (idx += 1) {
-        const item = self.gc_mark_stack.items[idx];
+    while (self.gc_mark_stack.pop()) |item| {
         switch (item) {
             .data => |data| markDataImpl(self, data),
             .table => |id| {
@@ -218,7 +216,6 @@ pub fn processMarkStack(self: *VM) void {
             },
         }
     }
-    self.gc_mark_stack.clearRetainingCapacity();
 }
 
 pub inline fn markRoots(self: *VM) void {

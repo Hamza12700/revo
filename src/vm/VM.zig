@@ -9,6 +9,8 @@ pub const DebugOptions = struct {
     each_stack: bool = false,
 };
 
+pub const debug_assert_types = false;
+
 pub const VM = @This();
 
 pub const Globals = std.AutoHashMap(GlobalID, Data);
@@ -167,7 +169,6 @@ gc_threshold: usize = 512 * 1024, // 512kb initial
 gc_pause_factor: usize = 2,
 // 64kb nursery
 gc_nursery_threshold: usize = 64 * 1024,
-debug_assert_types: bool = false,
 
 /// for table lookups
 icache: [256]ICacheEntry = undefined,
@@ -468,7 +469,6 @@ pub fn pop(self: *VM) !Data {
     if (fiber.slots.items.len == 0) return error.StackUnderflow;
 
     const ret = fiber.slots.pop() orelse unreachable;
-    // if (self.debug.each_stack) self.printStack();
     return ret;
 }
 
@@ -678,7 +678,7 @@ pub fn currentDebugSourceName(self: *VM) ?[]const u8 {
     return if (self.currentDebugInfo()) |info| info.source_name else null;
 }
 
-fn spanAtPc(self: *VM, info: *const DebugInfo, pc: ProgramCounter) ?Span {
+pub fn spanAtPc(self: *VM, info: *const DebugInfo, pc: ProgramCounter) ?Span {
     _ = self;
     if (pc >= info.spans.len) return null;
     return info.spans[pc];
@@ -736,7 +736,7 @@ pub fn currentFrame(self: *VM) !*Frame {
     return &self.currentFiber().frames.items[self.currentFiber().frames.items.len - 1];
 }
 
-inline fn currentClosure(self: *VM) !?*root.functions.Closure {
+pub inline fn currentClosure(self: *VM) !?*root.functions.Closure {
     const frame = try self.currentFrame();
     const closure_id = frame.closure_id orelse return null;
     const func = try self.functionFast(closure_id);
@@ -746,7 +746,7 @@ inline fn currentClosure(self: *VM) !?*root.functions.Closure {
     };
 }
 
-inline fn captureUpvalue(self: *VM, slot_index: usize) !root.functions.UpvalueID {
+pub inline fn captureUpvalue(self: *VM, slot_index: usize) !root.functions.UpvalueID {
     const open = &self.currentFiber().open_upvalues;
     for (open.items, 0..) |entry, idx| {
         if (entry.slot_index == slot_index) return entry.id;
@@ -783,13 +783,13 @@ fn closeUpvalues(self: *VM, from_index: usize) !void {
     }
 }
 
-inline fn loadUpvalueData(self: *VM, upvalue_id: root.functions.UpvalueID) !Data {
+pub inline fn loadUpvalueData(self: *VM, upvalue_id: root.functions.UpvalueID) !Data {
     const upvalue = try self.functions.getUpvalue(upvalue_id);
     if (upvalue.open_index) |slot_index| return self.currentFiber().slots.items[slot_index];
     return upvalue.closed;
 }
 
-inline fn storeUpvalueData(self: *VM, upvalue_id: root.functions.UpvalueID, value: Data) !void {
+pub inline fn storeUpvalueData(self: *VM, upvalue_id: root.functions.UpvalueID, value: Data) !void {
     const upvalue = try self.functions.getUpvalue(upvalue_id);
     if (upvalue.open_index) |slot_index| {
         self.currentFiber().slots.items[slot_index] = value;
@@ -826,9 +826,7 @@ fn detachClosureForFiber(self: *VM, closure_id: mem.FunctionID) !mem.FunctionID 
     return self.functions.createClosure(closure.prototype, detached.items);
 }
 
-const fetch = vm_exec.fetch;
-const trace = vm_exec.trace;
-const dumpStack = vm_exec.dumpStack;
+const execFiberUntilDepth = vm_exec.execFiberUntilDepth;
 
 pub fn run(self: *VM) !void {
     return switch (try self.runReport()) {
@@ -863,6 +861,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     errdefer {
         fiber.slots.items.len = initial_slot_len;
         fiber.pc = initial_pc;
+        self.closeUpvalues(initial_slot_len) catch {};
         while (fiber.frames.items.len > initial_frame_depth) {
             _ = fiber.frames.pop();
         }
@@ -886,10 +885,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     try self.callRegister(.{ .op = .call, .a = call_reg, .b = argc, .c = call_reg });
 
     if (fiber.frames.items.len > caller_frame_depth) {
-        while (fiber.frames.items.len > caller_frame_depth) {
-            const instr = try self.fetch();
-            try self.evalRegister(instr);
-        }
+        if (try self.execFiberUntilDepth(caller_frame_depth)) |_| return error.Panic;
     }
 
     const result = fiber.slots.items[callee_slot];
@@ -1076,7 +1072,7 @@ pub const EvalError = error{
     ConstantReassignment,
 } || root.functions.NativeError;
 
-inline fn tableFast(
+pub inline fn tableFast(
     self: *VM,
     id: mem.TableID,
 ) !*root.table.Table {
@@ -1302,11 +1298,10 @@ fn callNonClosureFunction(
     }
 }
 
-fn callRegister(
+pub fn callRegister(
     self: *VM,
     instr: Instruction,
 ) EvalError!void {
-    // self.perf.call_ops += 1;
     const fiber = self.currentFiber();
     const frame = try self.currentFrame();
     const base = frame.base;
@@ -1440,7 +1435,6 @@ fn callRegister(
             callee,
             revo.core_atoms.atom_id(.__call),
         )) |mm| {
-            // self.perf.metamethod_calls += 1;
             const args_start = callee_slot + 1;
             const args_end = args_start + argc;
             try self.ensureAbsoluteSlot(args_end);
@@ -1624,7 +1618,7 @@ fn structFieldValueMatches(
     return std.mem.eql(u8, expected_name, revo.std_lib.typeof(value));
 }
 
-fn setStructField(
+pub fn setStructField(
     self: *VM,
     object: Data,
     field_atom: revo.memory.AtomID,
@@ -1666,7 +1660,7 @@ fn setStructField(
     return true;
 }
 
-fn structGetInstance(
+pub fn structGetInstance(
     self: *VM,
     id: revo.vm.struct_mod.StructInstanceID,
 ) EvalError!*revo.vm.struct_mod.StructInstance {
@@ -1680,7 +1674,7 @@ fn structGetInstance(
     };
 }
 
-fn returnRegister(
+pub fn returnRegister(
     self: *VM,
     instr: Instruction,
 ) EvalError!void {
@@ -1757,13 +1751,14 @@ fn returnRegister(
     fiber.slots.items[result_slot] = result;
 }
 
-inline fn spawnRegister(
+pub inline fn spawnRegister(
     self: *VM,
     instr: Instruction,
+    base: usize,
 ) EvalError!void {
     const argc: usize = instr.b;
     const fiber = self.currentFiber();
-    const callee = try self.readRegister(instr.a);
+    const callee = regRead(fiber.slots.items, base, instr.a);
     const closure_id = callee.asFunction() orelse {
         try self.setRuntimeMessage("spawn expects function!");
         return error.NotAFunction;
@@ -1798,15 +1793,15 @@ inline fn spawnRegister(
     try child.slots.resize(self.runtime.alloc, closure.register_count);
     @memset(child.slots.items, revo.core_atoms.data(.missing));
 
+    const fiber_slots = fiber.slots.items;
     for (0..argc) |idx| {
         // this is safe
         const src_reg = instr.a + 1 + @as(opcode.Register, @intCast(idx));
-        const src_slot = try self.absoluteRegisterIndex(src_reg);
-        if (src_slot < self.currentFiber().slots.items.len) {
-            child.slots.items[idx] = self.currentFiber().slots.items[src_slot];
-        } else {
-            child.slots.items[idx] = revo.core_atoms.data(.missing);
-        }
+        const src_slot = base + src_reg;
+        child.slots.items[idx] = if (src_slot < fiber_slots.len)
+            fiber_slots[src_slot]
+        else
+            revo.core_atoms.data(.missing);
     }
 
     const child_closure_id = try self.detachClosureForFiber(
@@ -1822,1074 +1817,13 @@ inline fn spawnRegister(
     child.pc = closure.addr;
 
     try self.sched.fibers.append(self.runtime.alloc, child);
-    try @call(.always_inline, Scheduler.enqueueRunnable, .{ &self.sched, child_id });
-    try self.writeRegister(
-        instr.c,
-        Data.new.num(@as(i64, @intCast(child_id))),
-    );
-}
-
-pub inline fn evalRegister(
-    self: *VM,
-    instr: Instruction,
-) EvalError!void {
-    const fiber = self.currentFiber();
-    const base = fiber.frames.items[fiber.frames.items.len - 1].base;
-    const slots = fiber.slots.items;
-    const alloc = self.runtime.alloc;
-    // std.debug.print("{any}\n", .{instr});
-
-    switch (instr.op) {
-        .move => {
-            const val = regRead(slots, base, instr.b);
-            regWrite(slots, base, instr.a, val);
-        },
-        .load_const => {
-            if (instr.bx >= self.constants.items.len)
-                return error.InvalidConstant;
-            regWrite(slots, base, instr.a, self.constants.items[instr.bx]);
-        },
-        .load_nil => regWrite(slots, base, instr.a, revo.core_atoms.data(.nil)),
-        .load_small_int => regWrite(
-            slots,
-            base,
-            instr.a,
-            Data.new.num(@as(i64, @intCast(instr.bx))),
-        ),
-        .add => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                regWrite(slots, base, instr.a, Data.new.num(ln + rn));
-                return;
-            };
-            if (lhs.asStr()) |ls| if (rhs.asStr()) |rs| {
-                const l_str = self.stringValue(ls);
-                const r_str = self.stringValue(rs);
-                self.noteGCPressure(l_str.len + r_str.len + @sizeOf(Data));
-                const result_str = try self.adoptDataStringNoDedup(
-                    try std.mem.concat(alloc, u8, &.{ l_str, r_str }),
-                );
-                regWrite(slots, base, instr.a, result_str);
-                return;
-            };
-            try self.setRuntimeMessageFmt(
-                "cannot add {s} and {s}",
-                .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) },
-            );
-            return error.IncompatibleTypes;
-        },
-        .sub => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                regWrite(slots, base, instr.a, Data.new.num(ln - rn));
-                return;
-            };
-            try self.setRuntimeMessageFmt(
-                "cannot subtract {s} from {s}",
-                .{ revo.std_lib.dataToString(rhs), revo.std_lib.dataToString(lhs) },
-            );
-            return error.IncompatibleTypes;
-        },
-        .mul => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                regWrite(slots, base, instr.a, Data.new.num(ln * rn));
-                return;
-            };
-            const StrNum = struct { s: mem.StringID, n: f64 };
-            const str_and_num: ?StrNum = blk: {
-                if (lhs.asStr()) |ls| if (rhs.asNum()) |n|
-                    break :blk .{ .s = ls, .n = n };
-                if (rhs.asStr()) |rs| if (lhs.asNum()) |n|
-                    break :blk .{ .s = rs, .n = n };
-                break :blk null;
-            };
-            if (str_and_num) |pair| {
-                const str = self.stringValue(pair.s);
-                const count: usize = @intCast(
-                    std.math.clamp(
-                        @as(i64, @intFromFloat(pair.n)),
-                        0,
-                        std.math.maxInt(i32),
-                    ),
-                );
-                _ = std.math.mul(usize, str.len, count) catch
-                    return error.OutOfMemory;
-                self.noteGCPressure(str.len * count + @sizeOf(Data));
-                const result = try alloc.alloc(u8, str.len * count);
-                for (0..count) |i|
-                    @memcpy(result[i * str.len ..][0..str.len], str);
-                regWrite(slots, base, instr.a, try self.adoptDataStringNoDedup(result));
-                return;
-            }
-            try self.setRuntimeMessageFmt(
-                "cannot multiply {s} and {s}",
-                .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) },
-            );
-            return error.IncompatibleTypes;
-        },
-        .div => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                if (rn == 0) return error.DivisionByZero;
-                regWrite(slots, base, instr.a, Data.new.num(ln / rn));
-                return;
-            };
-            try self.setRuntimeMessageFmt(
-                "cannot divide {s} by {s}",
-                .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) },
-            );
-            return error.IncompatibleTypes;
-        },
-        .mod => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                if (rn == 0) return error.DivisionByZero;
-                regWrite(slots, base, instr.a, Data.new.num(@mod(ln, rn)));
-                return;
-            };
-            try self.setRuntimeMessageFmt(
-                "cannot mod {s} by {s}",
-                .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) },
-            );
-            return error.IncompatibleTypes;
-        },
-        .mod_int => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (self.debug_assert_types) {
-                std.debug.assert(lhs.isNumber());
-                std.debug.assert(rhs.isNumber());
-            }
-            const li = @as(
-                i64,
-                @intFromFloat(@as(f64, @bitCast(lhs.bits))),
-            );
-            const ri = @as(
-                i64,
-                @intFromFloat(@as(f64, @bitCast(rhs.bits))),
-            );
-            if (ri == 0) return error.DivisionByZero;
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.num(@as(f64, @floatFromInt(@mod(li, ri)))),
-            );
-        },
-        .negate => {
-            const v = regRead(slots, base, instr.b);
-            if (v.asNum()) |n| {
-                regWrite(slots, base, instr.a, Data.new.num(-n));
-                return;
-            }
-            try self.setRuntimeMessageFmt("cannot negate {s}", .{revo.std_lib.dataToString(v)});
-            return error.IncompatibleTypes;
-        },
-        .negate_int => {
-            const v = regRead(slots, base, instr.b);
-            if (self.debug_assert_types)
-                std.debug.assert(v.isNumber());
-            const v_int = @as(
-                i64,
-                @intFromFloat(@as(f64, @bitCast(v.bits))),
-            );
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.num(@as(f64, @floatFromInt(-v_int))),
-            );
-        },
-        .negate_float => {
-            const v = regRead(slots, base, instr.b);
-            if (self.debug_assert_types)
-                std.debug.assert(v.isNumber());
-            regWrite(slots, base, instr.a, Data.new.num(-@as(
-                f64,
-                @bitCast(v.bits),
-            )));
-        },
-        // specialized arith opcodes for typed int/float
-        // direct @bitCast, no tag check
-        .add_int => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) +
-                @as(f64, @bitCast(rhs.bits))));
-        },
-        .sub_int => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) -
-                @as(f64, @bitCast(rhs.bits))));
-        },
-        .mul_int => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (self.debug_assert_types) {
-                std.debug.assert(lhs.isNumber());
-                std.debug.assert(rhs.isNumber());
-            }
-            const li = @as(i64, @intFromFloat(@as(f64, @bitCast(lhs.bits))));
-            const ri = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs.bits))));
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @floatFromInt(li * ri))));
-        },
-        .div_int => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (self.debug_assert_types) {
-                std.debug.assert(lhs.isNumber());
-                std.debug.assert(rhs.isNumber());
-            }
-            const rv = @as(f64, @bitCast(rhs.bits));
-            if (rv == 0) return error.DivisionByZero;
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.num(@divTrunc(
-                    @as(
-                        i64,
-                        @intFromFloat(@as(
-                            f64,
-                            @bitCast(lhs.bits),
-                        )),
-                    ),
-                    @as(
-                        i64,
-                        @intFromFloat(rv),
-                    ),
-                )),
-            );
-        },
-        .div_float => {
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            if (self.debug_assert_types) {
-                std.debug.assert(lhs.isNumber());
-                std.debug.assert(rhs.isNumber());
-            }
-            if (@as(f64, @bitCast(rhs.bits)) == 0)
-                return error.DivisionByZero;
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.num(@as(
-                    f64,
-                    @bitCast(lhs.bits),
-                ) / @as(
-                    f64,
-                    @bitCast(rhs.bits),
-                )),
-            );
-        },
-        inline .eq, .neq, .lt, .gt, .lte, .gte => |op| try compare_impl.evalCachedFast(
-            slots,
-            base,
-            self,
-            instr,
-            op,
-        ),
-        // specialized typed comparison opcodes
-        inline .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => |op| {
-            const lhs_val = regRead(slots, base, instr.b);
-            const rhs_val = regRead(slots, base, instr.c);
-            const lhs = @as(i64, @intFromFloat(@as(f64, @bitCast(lhs_val.bits))));
-            const rhs = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs_val.bits))));
-            const result = switch (op) {
-                .eq_int => lhs == rhs,
-                .neq_int => lhs != rhs,
-                .lt_int => lhs < rhs,
-                .gt_int => lhs > rhs,
-                .lte_int => lhs <= rhs,
-                .gte_int => lhs >= rhs,
-                else => unreachable,
-            };
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.boolean(result),
-            );
-        },
-        .@"and" => regWrite(
-            slots,
-            base,
-            instr.a,
-            Data.new.boolean(
-                !revo.isFalse(regRead(
-                    slots,
-                    base,
-                    instr.b,
-                )) and
-                    !revo.isFalse(regRead(
-                        slots,
-                        base,
-                        instr.c,
-                    )),
-            ),
-        ),
-        .@"or" => regWrite(
-            slots,
-            base,
-            instr.a,
-            Data.new.boolean(
-                !revo.isFalse(regRead(
-                    slots,
-                    base,
-                    instr.b,
-                )) or
-                    !revo.isFalse(regRead(
-                        slots,
-                        base,
-                        instr.c,
-                    )),
-            ),
-        ),
-        .not => regWrite(
-            slots,
-            base,
-            instr.a,
-            Data.new.boolean(revo.isFalse(regRead(
-                slots,
-                base,
-                instr.b,
-            ))),
-        ),
-        .table_new => {
-            self.noteGCPressure(@sizeOf(root.table.Table) + 64);
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.table(try self.tables.create()),
-            );
-        },
-        .table_set => {
-            // self.perf.table_set_ops += 1;
-            const table_value = regRead(
-                slots,
-                base,
-                instr.a,
-            );
-            const key = regRead(slots, base, instr.b);
-            if (key.asAtom()) |atom| {
-                if (try self.setStructField(
-                    table_value,
-                    atom,
-                    regRead(slots, base, instr.c),
-                )) return;
-            }
-            const t_id = table_value.asTable() orelse return error.TypeError;
-            const t = try self.tableFast(t_id);
-            try t.put(
-                t_id,
-                self,
-                key,
-                regRead(slots, base, instr.c),
-            );
-        },
-        .table_get => {
-            // self.perf.table_get_ops += 1;
-            const object = regRead(slots, base, instr.b);
-            const key = regRead(slots, base, instr.c);
-            if (object.asTable()) |t_id| {
-                const t = try self.tableFast(t_id);
-                if (t.getRaw(key)) |value| {
-                    regWrite(
-                        slots,
-                        base,
-                        instr.a,
-                        value,
-                    );
-                    return;
-                }
-            }
-            if (try self.resolveField(object, key)) |resolved| {
-                regWrite(
-                    slots,
-                    base,
-                    instr.a,
-                    resolved.value,
-                );
-            } else regWrite(
-                slots,
-                base,
-                instr.a,
-                revo.core_atoms.data(.undef),
-            );
-        },
-        .table_set_atom => {
-            // self.perf.table_set_ops += 1;
-            const table_value = regRead(
-                slots,
-                base,
-                instr.a,
-            );
-            if (try self.setStructField(
-                table_value,
-                instr.bx,
-                regRead(slots, base, instr.c),
-            )) return;
-            const t_id = table_value.asTable() orelse return error.TypeError;
-            const t = try self.tableFast(t_id);
-            const key = Data.new.atom(instr.bx);
-            try t.put(
-                t_id,
-                self,
-                key,
-                regRead(slots, base, instr.c),
-            );
-        },
-        .table_get_atom => {
-            // self.perf.table_get_ops += 1;
-            const object = regRead(slots, base, instr.b);
-            const t_id = object.asTable() orelse {
-                const key = Data.new.atom(instr.bx);
-                if (try self.resolveField(
-                    object,
-                    key,
-                )) |resolved| {
-                    regWrite(
-                        slots,
-                        base,
-                        instr.a,
-                        resolved.value,
-                    );
-                } else regWrite(
-                    slots,
-                    base,
-                    instr.a,
-                    revo.core_atoms.data(.undef),
-                );
-                return;
-            };
-            const pc = fiber.pc - 1;
-            const ic = &self.icache[pc & (self.icache.len - 1)];
-            const t = try self.tableFast(t_id);
-
-            if (ic.pc == pc and
-                ic.table_id == t_id and
-                ic.version == t.ic_version)
-            {
-                @branchHint(.likely);
-                regWrite(
-                    slots,
-                    base,
-                    instr.a,
-                    ic.value,
-                );
-            } else {
-                const key = Data.new.atom(instr.bx);
-                if (t.getRaw(key)) |value| {
-                    ic.* = .{
-                        .pc = pc,
-                        .table_id = t_id,
-                        .version = t.ic_version,
-                        .value = value,
-                    };
-                    regWrite(
-                        slots,
-                        base,
-                        instr.a,
-                        value,
-                    );
-                    return;
-                }
-                if (try self.resolveField(
-                    object,
-                    key,
-                )) |resolved| {
-                    ic.* = .{
-                        .pc = pc,
-                        .table_id = t_id,
-                        .version = t.ic_version,
-                        .value = resolved.value,
-                    };
-                    regWrite(
-                        slots,
-                        base,
-                        instr.a,
-                        resolved.value,
-                    );
-                } else regWrite(
-                    slots,
-                    base,
-                    instr.a,
-                    revo.core_atoms.data(.undef),
-                );
-            }
-        },
-        .tuple_new => {
-            const start = base + instr.b;
-            const count: usize = instr.bx;
-            self.noteGCPressure(
-                @sizeOf(root.tuple.Tuple) +
-                    @sizeOf(Data) * instr.bx,
-            );
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.tuple(try self.tuples.create(
-                    slots[start .. start + count],
-                )),
-            );
-        },
-        .tuple_get => {
-            const tuple_id = (regRead(
-                slots,
-                base,
-                instr.b,
-            )).asTuple() orelse return error.TypeError;
-            const idx_val = regRead(slots, base, instr.c);
-            const idx_num = idx_val.asNum() orelse return error.TypeError;
-            if (idx_num < 0 or
-                @floor(idx_num) != idx_num) return error.TypeError;
-            if (idx_num > @as(
-                f64,
-                @floatFromInt(std.math.maxInt(usize)),
-            )) return error.TypeError;
-            const idx: usize = @intFromFloat(idx_num);
-            const t = try self.tuples.get(tuple_id);
-            if (idx >= t.items.len) {
-                try self.setRuntimeMessageFmt(
-                    "tuple index {d} out of range for tuple of length {d}",
-                    .{ idx, t.items.len },
-                );
-                return error.InvalidTuple;
-            }
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                t.items[idx],
-            );
-        },
-        .tuple_get_const => {
-            const tuple_id = (regRead(
-                slots,
-                base,
-                instr.b,
-            )).asTuple() orelse return error.TypeError;
-            const t = try self.tuples.get(tuple_id);
-            if (instr.bx >= t.items.len) {
-                try self.setRuntimeMessageFmt(
-                    "tuple index {d} out of range for tuple of length {d}",
-                    .{ instr.bx, t.items.len },
-                );
-                return error.InvalidTuple;
-            }
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                t.items[instr.bx],
-            );
-        },
-        .struct_new => {
-            const type_id: revo.StructTypeID = instr.bx;
-            const desc = self.struct_types.getType(
-                type_id,
-            ) orelse {
-                try self.setRuntimeMessage(
-                    "invalid struct type",
-                );
-                return error.Panic;
-            };
-            const instance_id = try self.struct_instances.create(
-                type_id,
-                desc.fields.len,
-            );
-            const instance = self.structGetInstance(
-                instance_id,
-            ) catch return error.Panic;
-            //
-            // defaults
-            for (desc.fields, 0..) |f, i| {
-                if (f.default_val) |dv|
-                    instance.fields[i] = dv;
-            }
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.structVal(instance_id),
-            );
-        },
-        .struct_set_method => {
-            const type_val = regRead(
-                slots,
-                base,
-                instr.a,
-            );
-            const type_id = type_val.asStructType() orelse return error.TypeError;
-            const name_atom_data = regRead(
-                slots,
-                base,
-                instr.b,
-            );
-            const name_atom = name_atom_data.asAtom() orelse return error.TypeError;
-            const method = regRead(
-                slots,
-                base,
-                instr.c,
-            );
-            const desc = self.struct_types.getType(
-                type_id,
-            ) orelse return error.TypeError;
-            try desc.methods.put(
-                self.atomName(name_atom),
-                method,
-            );
-        },
-        .struct_get_offset => {
-            const object = regRead(slots, base, instr.b);
-            const instance_id = object.asStructVal() orelse return error.TypeError;
-            const instance = self.structGetInstance(
-                instance_id,
-            ) catch return error.Panic;
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                instance.get(instr.bx),
-            );
-        },
-        .struct_set_offset => {
-            const object = regRead(slots, base, instr.a);
-            const instance_id = object.asStructVal() orelse return error.TypeError;
-            const instance = self.structGetInstance(
-                instance_id,
-            ) catch return error.Panic;
-            const value = regRead(slots, base, instr.c);
-            instance.set(instr.bx, value);
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.structVal(instance_id),
-            );
-        },
-        .jump => fiber.pc = instr.bx,
-        .jump_if_false => {
-            @branchHint(.unlikely);
-            if (revo.isFalse(regRead(
-                slots,
-                base,
-                instr.a,
-            ))) fiber.pc = instr.bx;
-        },
-        .jump_if_true => {
-            @branchHint(.unlikely);
-            if (!revo.isFalse(regRead(
-                slots,
-                base,
-                instr.a,
-            ))) fiber.pc = instr.bx;
-        },
-        .load_global => {
-            const value = self.globals.get(instr.bx) orelse {
-                try self.setRuntimeMessageFmt(
-                    "undefined variable `{s}`",
-                    .{self.atomName(instr.bx)},
-                );
-                return error.UndefinedVariable;
-            };
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                value,
-            );
-        },
-        .load_stdlib_global => {
-            const value = self.stdlib_globals.get(
-                instr.bx,
-            ) orelse {
-                try self.setRuntimeMessageFmt(
-                    "undefined stdlib variable `{s}`",
-                    .{self.atomName(instr.bx)},
-                );
-                return error.UndefinedVariable;
-            };
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                value,
-            );
-        },
-        .store_global => {
-            if (self.const_globals.contains(instr.bx)) {
-                try self.setRuntimeMessage(
-                    "reassignment to constant!",
-                );
-                return error.ConstantReassignment;
-            }
-            try self.globals.put(
-                instr.bx,
-                try self.readRegister(instr.a),
-            );
-        },
-        .store_global_const => {
-            if (self.const_globals.contains(instr.bx)) {
-                try self.setRuntimeMessage(
-                    "reassignment to constant!",
-                );
-                return error.ConstantReassignment;
-            }
-            try self.globals.put(
-                instr.bx,
-                try self.readRegister(instr.a),
-            );
-            try self.const_globals.put(instr.bx, {});
-        },
-        .load_local, .bind_local => {
-            const dst = base + instr.a;
-            const src = base + instr.b;
-            if (builtin.mode != .ReleaseFast and
-                src >= slots.len)
-            {
-                regWrite(
-                    slots,
-                    base,
-                    instr.a,
-                    revo.core_atoms.data(.missing),
-                );
-            } else {
-                slots[dst] = slots[src];
-            }
-        },
-        .store_local => {
-            if (try self.currentClosure()) |closure| blk: {
-                const proto = try self.functions.getPrototype(
-                    closure.prototype,
-                );
-                const idx = instr.a / 8;
-                if (idx >= proto.const_local_bits.len)
-                    break :blk;
-                const bit: u3 = @intCast(instr.a % 8);
-                if ((proto.const_local_bits[idx] &
-                    (@as(u8, 1) << bit)) != 0) return error.ConstantReassignment;
-            }
-            const dst = base + instr.a;
-            const src = base + instr.b;
-            if (builtin.mode != .ReleaseFast and
-                src >= slots.len)
-            {
-                regWrite(
-                    slots,
-                    base,
-                    instr.a,
-                    revo.core_atoms.data(.missing),
-                );
-            } else {
-                slots[dst] = slots[src];
-            }
-        },
-        .closure => {
-            const proto = try self.functions.getPrototype(
-                instr.bx,
-            );
-            self.noteGCPressure(
-                @sizeOf(root.functions.Closure) +
-                    @sizeOf(root.functions.UpvalueID) * proto.upvalue_specs.len,
-            );
-            var upvalues = try std.ArrayList(
-                root.functions.UpvalueID,
-            ).initCapacity(
-                self.runtime.alloc,
-                proto.upvalue_specs.len,
-            );
-            defer upvalues.deinit(self.runtime.alloc);
-
-            for (proto.upvalue_specs) |spec| {
-                if (spec.is_local) {
-                    const frame = fiber.frames.items[
-                        fiber.frames.items.len - 1
-                    ];
-                    try upvalues.append(
-                        self.runtime.alloc,
-                        try self.captureUpvalue(frame.base + spec.index),
-                    );
-                } else {
-                    const closure = (try self.currentClosure()) orelse return error.TypeError;
-                    try upvalues.append(self.runtime.alloc, closure.upvalues[spec.index]);
-                }
-            }
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.function(try self.functions.createClosure(instr.bx, upvalues.items)),
-            );
-        },
-        .load_upval => {
-            const closure = (try self.currentClosure()) orelse return error.InvalidLocal;
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                try self.loadUpvalueData(closure.upvalues[instr.bx]),
-            );
-        },
-        .store_upval => {
-            const closure = (try self.currentClosure()) orelse return error.InvalidLocal;
-            try self.storeUpvalueData(closure.upvalues[instr.bx], regRead(slots, base, instr.a));
-        },
-        .call => try self.callRegister(instr),
-        .call_field => {
-            const colon = (instr.b & @as(opcode.Register, 1 << 15)) != 0;
-            const explicit_argc: usize = @intCast(
-                instr.b & ~@as(opcode.Register, 1 << 15),
-            );
-            const object = try self.readRegister(instr.a);
-            const key = try self.readRegister(instr.a + 1);
-
-            const lookup_result = (try self.resolveField(
-                object,
-                key,
-            )) orelse {
-                const key_name = if (key.asAtom()) |atom|
-                    self.atomName(atom)
-                else
-                    revo.std_lib.dataToString(key);
-                try self.setRuntimeMessageFmt(
-                    "field `{s}` does not exist on {s}",
-                    .{ key_name, revo.std_lib.typeof(object) },
-                );
-                return error.NotAFunction;
-            };
-
-            if (colon) {
-                try self.writeRegister(instr.a, lookup_result.value);
-                try self.writeRegister(instr.a + 1, object);
-                try self.callRegister(.{ .op = .call, .a = instr.a, .b = @intCast(explicit_argc + 1), .c = instr.c });
-                return;
-            }
-
-            // keep argv continuous without shifting
-            // callee in a+1, args already start at a+2
-            try self.writeRegister(instr.a + 1, lookup_result.value);
-            try self.callRegister(.{ .op = .call, .a = instr.a + 1, .b = @intCast(explicit_argc), .c = instr.c });
-        },
-        .ret => try self.returnRegister(instr),
-        .spawn => try self.spawnRegister(instr),
-        .join => {
-            const handle = regRead(slots, base, instr.a);
-            const target_num = handle.asNum() orelse return error.TypeError;
-            const target_id = if (target_num >= 0 and
-                @floor(target_num) == target_num)
-                @as(usize, @intFromFloat(target_num))
-            else
-                return error.TypeError;
-            if (target_id >= self.sched.fibers.items.len)
-                return error.TypeError;
-            const target = &self.sched.fibers.items[target_id];
-            if (target.state == .dead) {
-                regWrite(slots, base, instr.a, target.result);
-            } else {
-                try target.waiters.append(self.runtime.alloc, self.sched.current_fiber);
-                self.sched.parkCurrentWithResult(
-                    .{ .join = target_id },
-                    try self.absoluteRegisterIndex(instr.a),
-                );
-            }
-        },
-        .yield => {
-            self.sched.setFiberState(self.sched.current_fiber, .ready);
-            fiber.running = false;
-        },
-        .halt => {
-            const result = regRead(slots, base, instr.a);
-            fiber.slots.items.len = 0;
-            try self.push(result);
-            fiber.running = false;
-            self.sched.setFiberState(self.sched.current_fiber, .dead);
-        },
-        .range_init => {
-            const start = regRead(slots, base, instr.b);
-            const limit = regRead(slots, base, instr.c);
-            const step = regRead(slots, base, @intCast(instr.bx));
-
-            // state layout in consecutive registers
-            // starting at a:
-            // R[a]   = current (start initially)
-            // R[a+1] = step
-            // R[a+2] = limit
-            regWrite(slots, base, instr.a, start);
-            regWrite(slots, base, instr.a + 1, step);
-            regWrite(slots, base, instr.a + 2, limit);
-        },
-        .range_next => {
-            // loop state in consecutive registers
-            // starting at b:
-            // R[b]   = current
-            // R[b+1] = step
-            // R[b+2] = limit
-            const current = (regRead(slots, base, instr.b)).as_number() catch return error.TypeError;
-            const step = (regRead(slots, base, instr.b + 1)).as_number() catch return error.TypeError;
-            const limit = (regRead(slots, base, instr.b + 2)).as_number() catch return error.TypeError;
-
-            const has_next = (step > 0 and current < limit) or
-                (step < 0 and current > limit);
-
-            // out: r[a]=value, r[c]=index (if c!=0)
-            // r[bx]=has_next
-            regWrite(slots, base, instr.a, Data.new.num(current));
-            if (instr.c != 0) {
-                const index_reg = regRead(slots, base, instr.c);
-                const index = index_reg.asNum() orelse 0.0;
-                if (has_next)
-                    regWrite(slots, base, instr.c, Data.new.num(index + 1));
-            }
-            regWrite(slots, base, @intCast(instr.bx), Data.new.boolean(has_next));
-
-            if (has_next)
-                regWrite(slots, base, instr.b, Data.new.num(current + step));
-        },
-        .range_for => {
-            // R[a] = current (in/out)
-            // R[b] = step
-            // R[c] = limit
-            // bx = max iterations
-            var current = (regRead(slots, base, instr.a)).as_number() catch return error.TypeError;
-            const step = (regRead(slots, base, instr.b)).as_number() catch return error.TypeError;
-            const limit = (regRead(slots, base, instr.c)).as_number() catch return error.TypeError;
-            const max_iter: f64 = @floatFromInt(instr.bx);
-
-            var i: f64 = 0;
-            while (i < max_iter) {
-                const done = (step > 0 and current > limit) or
-                    (step < 0 and current < limit);
-                if (done) break;
-                current += step;
-                i += 1;
-            }
-            regWrite(
-                slots,
-                base,
-                instr.a,
-                Data.new.num(current),
-            );
-        },
-        .unwrap_result => {
-            const val = regRead(slots, base, instr.a);
-            const propagate_errors = instr.bx == 0;
-
-            // if val is (:err, ...) is true, return early
-            const tuple_id = val.asTuple() orelse return;
-            const tuple = try self.tuples.get(tuple_id);
-            if (tuple.items.len == 0) return;
-
-            const tag = tuple.items[0];
-
-            // branch (:err, e)
-            if (tag.asAtom() == revo.core_atoms.atom_id(.err)) {
-                if (propagate_errors) {
-                    if (fiber.frames.items.len == 2) {
-                        if (tuple.items.len > 1) {
-                            var buf = std.Io.Writer.Allocating.init(
-                                self.runtime.alloc,
-                            );
-                            defer buf.deinit();
-                            tuple.items[1].write(
-                                &buf.writer,
-                                self,
-                                .display,
-                            ) catch |err| switch (err) {
-                                error.OutOfMemory => return error.OutOfMemory,
-                                else => return error.Panic,
-                            };
-                            self.setPanicMessageOwned(
-                                try buf.toOwnedSlice(),
-                            );
-                        }
-                        self.panic_span = if (self.currentDebugInfo()) |debug|
-                            self.spanAtPc(
-                                debug,
-                                if (fiber.pc > 0)
-                                    fiber.pc - 1
-                                else
-                                    0,
-                            )
-                        else
-                            null;
-                        return error.Panic;
-                    }
-                    try self.returnRegister(.{
-                        .op = .ret,
-                        .a = instr.a,
-                    });
-                    return;
-                }
-                // otherwise just pass thru
-                // don't unwrap unless propagating
-                return;
-            }
-
-            // check if (:ok, v) then extract
-            if (tag.asAtom() == revo.core_atoms.atom_id(.ok)) {
-                if (tuple.items.len > 1) {
-                    regWrite(
-                        slots,
-                        base,
-                        instr.a,
-                        tuple.items[1],
-                    );
-                }
-                return;
-            }
-
-            // otherwise just pass thru
-        },
-        .jump_if_not_nil_and_not_err => {
-            const val = regRead(slots, base, instr.a);
-            const is_nil = if (val.asAtom()) |a|
-                a == revo.core_atoms.atom_id(.nil)
-            else
-                false;
-            const is_err = if (val.asTuple()) |tid| blk: {
-                const tuple = try self.tuples.get(tid);
-                if (tuple.items.len > 0) {
-                    const tag = tuple.items[0];
-                    break :blk tag.asAtom() ==
-                        revo.core_atoms.atom_id(.err);
-                }
-                break :blk false;
-            } else false;
-
-            if (!is_nil and !is_err) {
-                fiber.pc = instr.bx;
-            }
-        },
-        .jump_if_err => {
-            const val = regRead(slots, base, instr.a);
-            const is_err = if (val.asTuple()) |tid| blk: {
-                const tuple = try self.tuples.get(tid);
-                if (tuple.items.len > 0) {
-                    const tag = tuple.items[0];
-                    break :blk tag.asAtom() ==
-                        revo.core_atoms.atom_id(.err);
-                }
-                break :blk false;
-            } else false;
-
-            if (is_err) {
-                fiber.pc = instr.bx;
-            }
-        },
+    try self.sched.enqueueRunnable(child_id);
+    const result_slot = base + instr.c;
+    if (result_slot >= fiber_slots.len) {
+        try fiber.slots.resize(self.runtime.alloc, result_slot + 1);
     }
+    fiber.slots.items[result_slot] = Data.new.num(@as(i64, @intCast(child_id)));
 }
-
 // gc
 pub fn markData(self: *VM, data: Data) void {
     vm_gc.markData(self, data);
