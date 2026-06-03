@@ -36,10 +36,22 @@ pub fn compileLoop(self: *Compiler, body: *const Node) !void {
 
     const loop_start: ProgramCounter = @intCast(self.instructions.items.len);
     try self.compile(body, true);
+
+    const body_res: Register = @intCast(self.active_registers - 1);
+    const loop_reg: Register = @intCast(self.loop_result_regs.items[self.loop_result_regs.items.len - 1]);
+
+    if (body_res != loop_reg) {
+        try emit.appendRecorded(self, .{
+            .op = .move,
+            .a = loop_reg,
+            .b = body_res,
+        });
+    }
+
     try emit.regRelease(self);
     try emit.emit(self, .jump, loop_start);
     // result visible to next binding
-    self.active_registers = self.loop_result_regs.items[self.loop_result_regs.items.len - 1] + 1;
+    self.active_registers = loop_reg + 1;
 }
 
 pub fn compileWhile(
@@ -51,16 +63,40 @@ pub fn compileWhile(
     var loop = try LoopScopeT.init(self);
     defer loop.deinit();
 
+    const loop_reg: Register = @intCast(self.loop_result_regs.items[self.loop_result_regs.items.len - 1]);
+
+    // compile body before the loop so that its value is the else value
+    // when the predicate is false on first entry
+    try self.compile(body, true);
+    const else_res: Register = @intCast(self.active_registers - 1);
+    if (else_res != loop_reg)
+        try emit.appendRecorded(self, .{
+            .op = .move,
+            .a = loop_reg,
+            .b = else_res,
+        });
+
+    try emit.regRelease(self);
+
     const loop_start: ProgramCounter = @intCast(self.instructions.items.len);
     try self.compile(predicate, true);
     const exit_jump = try emit.jump(self, .jump_if_false);
     try self.compile(body, true);
+
+    const body_res: Register = @intCast(self.active_registers - 1);
+    if (body_res != loop_reg)
+        try emit.appendRecorded(self, .{
+            .op = .move,
+            .a = loop_reg,
+            .b = body_res,
+        });
+
     try emit.regRelease(self);
     try emit.emit(self, .jump, loop_start);
 
     emit.patchJump(self, exit_jump);
     // same as compileLoop
-    self.active_registers = self.loop_result_regs.items[self.loop_result_regs.items.len - 1] + 1;
+    self.active_registers = loop_reg + 1;
 }
 
 pub fn compileForRange(

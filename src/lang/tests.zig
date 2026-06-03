@@ -1021,6 +1021,36 @@ test "break works inside fn" {
     , "asdf");
 }
 
+test "while else value when predicate false on first entry" {
+    try t.top_number(
+        \\ let a = 0
+        \\ let x = while do
+        \\     a += 1
+        \\     let result = (:err, :Asdf)
+        \\     a < 1
+        \\ end 123
+        \\ x
+    , 123);
+}
+
+test "while else value with simple false predicate" {
+    try t.top_number(
+        \\ let x = while do :false end 42
+        \\ x
+    , 42);
+}
+
+test "while body result is loop value after iterations" {
+    try t.top_number(
+        \\ let a = 0
+        \\ let x = while do
+        \\     a += 1
+        \\     a < 3
+        \\ end a
+        \\ x
+    , 2);
+}
+
 test "compile report carries span and message" {
     try t.expectCompileFailure(
         "break(1)",

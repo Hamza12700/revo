@@ -81,9 +81,18 @@ pub fn LoopScope(comptime T: type) type {
         compiler: *T,
         break_start: usize,
         prev_in_loop: usize,
-        pub fn init(compiler: *T) !@This() {
+        pub fn init(compiler: *Compiler) !@This() {
             const prev = compiler.in_loop_depth;
             compiler.in_loop_depth += 1;
+            reserveLocalSlots(compiler);
+
+            // make sure loop result reg stays above any locals declared inside the loop
+            const alloc_top = compiler.slot_allocators.items[compiler.slot_allocators.items.len - 1];
+            if (compiler.active_registers <= alloc_top) {
+                compiler.active_registers = alloc_top + 1;
+                if (compiler.active_registers > compiler.max_registers)
+                    compiler.max_registers = compiler.active_registers;
+            }
             const result_reg = try pushRegister(compiler);
             try emit.appendRecorded(compiler, .{ .op = .load_nil, .a = result_reg });
             try compiler.loop_result_regs.append(compiler.alloc, result_reg);
@@ -137,8 +146,16 @@ pub fn declareLocal(self: *Compiler, name: []const u8, mutable: bool) !LocalSlot
         state_ptr = &self.functions.items[self.functions.items.len - 1];
     }
     const state = state_ptr orelse unreachable;
-    const slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
+    var slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
     self.slot_allocators.items[self.slot_allocators.items.len - 1] += 1;
+    // inside a loop? make sure this slot doesn't collide with the loop result register
+    if (self.in_loop_depth > 0 and self.loop_result_regs.items.len > 0) {
+        const loop_reg = self.loop_result_regs.items[self.loop_result_regs.items.len - 1];
+        if (slot == loop_reg) {
+            slot = self.slot_allocators.items[self.slot_allocators.items.len - 1];
+            self.slot_allocators.items[self.slot_allocators.items.len - 1] += 1;
+        }
+    }
     const local: LocalVar = .{ .name = name, .slot = slot, .mutable = mutable, .initialized = false };
     try state.locals.append(self.alloc, local);
     try state.all_locals.append(self.alloc, local);

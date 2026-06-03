@@ -406,7 +406,7 @@ pub fn stringValue(self: *VM, id: mem.StringID) []const u8 {
     return self.strings.get(id) catch "<dead>";
 }
 
-pub fn push(self: *VM, val: Data) !void {
+pub inline fn push(self: *VM, val: Data) !void {
     const fiber = self.currentFiber();
     try fiber.slots.append(self.runtime.alloc, val);
 }
