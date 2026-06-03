@@ -94,10 +94,6 @@ pub fn inferFnType(self: *Compiler, params: []const ast.FnParam, return_type: ?[
 pub fn validateBindingType(self: *Compiler, type_name: []const u8, value: *const Node) !void {
     const expected = types_mod.resolveTypeName(self, type_name);
     const actual = inferExprType(self, value);
-    // atom literal assigned to atom-union alias
-    if (actual == .atom and expected == .@"union") {
-        return;
-    }
     try checkType(self.alloc, expected, actual, value.span);
 }
 

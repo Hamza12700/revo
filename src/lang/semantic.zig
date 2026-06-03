@@ -511,43 +511,49 @@ const SemanticChecker = struct {
         label_prefix: []const u8,
     ) !void {
         _ = label_prefix; // autofix
+        const actual_str = try types_mod.formatType(self.alloc, actual);
         const msg = try std.fmt.allocPrint(self.alloc, "`{s}` wants {s}, got {s}", .{
             name,
             expected_name,
-            types_mod.typeName(actual),
+            actual_str,
         });
         const label = try std.fmt.allocPrint(
             self.alloc,
             "wants {s}, got {s}",
-            .{ expected_name, types_mod.typeName(actual) },
+            .{ expected_name, actual_str },
         );
         try self.appendError(msg, span, label);
         _ = expected;
     }
 
     fn appendFieldMismatch(self: *SemanticChecker, field: anytype, expected: types_mod.TypeInfo, actual: types_mod.TypeInfo) !void {
+        const expected_str = try types_mod.formatType(self.alloc, expected);
+        const actual_str = try types_mod.formatType(self.alloc, actual);
+        const obj_name = try types_mod.formatType(self.alloc, types_mod.inferExprType(self, field.object));
         const msg = try std.fmt.allocPrint(self.alloc, "field `{s}` on `{s}` expected {s}, got {s}", .{
             field.name,
-            types_mod.typeName(types_mod.inferExprType(self, field.object)),
-            types_mod.typeName(expected),
-            types_mod.typeName(actual),
+            obj_name,
+            expected_str,
+            actual_str,
         });
         try self.appendError(msg, field.object.span, try std.fmt.allocPrint(self.alloc, "field {s} on {s} is not {s} (got {s})", .{
             field.name,
-            types_mod.typeName(types_mod.inferExprType(self, field.object)),
-            types_mod.typeName(expected),
-            types_mod.typeName(actual),
+            obj_name,
+            expected_str,
+            actual_str,
         }));
     }
 
     fn appendReturnMismatch(self: *SemanticChecker, span: ast.Span, expected: types_mod.TypeInfo, actual: types_mod.TypeInfo) !void {
+        const expected_str = try types_mod.formatType(self.alloc, expected);
+        const actual_str = try types_mod.formatType(self.alloc, actual);
         const msg = try std.fmt.allocPrint(self.alloc, "return type mismatch: wanted {s}, got {s}", .{
-            types_mod.typeName(expected),
-            types_mod.typeName(actual),
+            expected_str,
+            actual_str,
         });
         try self.appendError(msg, span, try std.fmt.allocPrint(self.alloc, "return type not {s} (got {s})", .{
-            types_mod.typeName(expected),
-            types_mod.typeName(actual),
+            expected_str,
+            actual_str,
         }));
     }
 

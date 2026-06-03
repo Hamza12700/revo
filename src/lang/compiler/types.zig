@@ -76,6 +76,29 @@ pub fn typeName(T: TypeInfo) []const u8 {
     };
 }
 
+/// alloc version of typeName, formats unions as well
+pub fn formatType(alloc: std.mem.Allocator, ti: TypeInfo) ![]const u8 {
+    return switch (ti) {
+        .@"union" => |variants| blk: {
+            var buf = try std.ArrayList(u8).initCapacity(alloc, 64);
+            errdefer buf.deinit(alloc);
+            for (variants, 0..) |v, i| {
+                if (i > 0) try buf.appendSlice(alloc, " | ");
+                if (v.name.len > 0) {
+                    try buf.append(alloc, ':');
+                    try buf.appendSlice(alloc, v.name);
+                }
+                for (v.types, 0..) |vt, j| {
+                    if (j > 0 or v.name.len > 0) try buf.append(alloc, ' ');
+                    try buf.appendSlice(alloc, typeName(vt));
+                }
+            }
+            break :blk try buf.toOwnedSlice(alloc);
+        },
+        else => try alloc.dupe(u8, typeName(ti)),
+    };
+}
+
 pub fn isNumeric(T: TypeInfo) bool {
     return T == .int or T == .float;
 }

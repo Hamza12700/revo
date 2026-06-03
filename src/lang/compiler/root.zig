@@ -987,6 +987,7 @@ pub const Compiler = struct {
                     reordered_args[i].span,
                 ) catch |err| switch (err) {
                     error.TypeError => {
+                        const actual_str = try types.formatType(self.alloc, actual_type);
                         const label = if (sig.param_names[i].len == 0)
                             try std.fmt.allocPrint(
                                 self.alloc,
@@ -1008,7 +1009,7 @@ pub const Compiler = struct {
                                     i + 1,
                                     fn_name,
                                     expected_type,
-                                    types.typeName(actual_type),
+                                    actual_str,
                                 },
                             )
                         else
@@ -1020,7 +1021,7 @@ pub const Compiler = struct {
                                     sig.param_names[i],
                                     fn_name,
                                     expected_type,
-                                    types.typeName(actual_type),
+                                    actual_str,
                                 },
                             );
                         try self.appendFailureReport(.ParseError, &.{
@@ -1574,10 +1575,11 @@ pub const Compiler = struct {
         const expected = types.resolveTypeName(self, declared);
         type_check.checkType(self.alloc, expected, actual, val.span) catch |err| switch (err) {
             error.TypeError => {
+                const actual_str = try types.formatType(self.alloc, actual);
                 const msg = try std.fmt.allocPrint(
                     self.alloc,
                     "return type mismatch: wanted {s}, got {s}",
-                    .{ declared, typeStr(actual) },
+                    .{ declared, actual_str },
                 );
                 return self.setFailureParts(
                     .ParseError,
@@ -1587,7 +1589,7 @@ pub const Compiler = struct {
                         .message = try std.fmt.allocPrint(
                             self.alloc,
                             "must return {s} (got {s})",
-                            .{ declared, typeStr(actual) },
+                            .{ declared, actual_str },
                         ),
                     },
                     msg,
@@ -1611,10 +1613,12 @@ pub const Compiler = struct {
         const expected = types.resolveTypeName(self, declared);
         type_check.checkType(self.alloc, expected, actual, last_expr.span) catch |err| switch (err) {
             error.TypeError => {
+                const actual_str = try types.formatType(self.alloc, actual);
+                const expected_str = try types.formatType(self.alloc, expected);
                 const msg = try std.fmt.allocPrint(
                     self.alloc,
                     "return type mismatch: wanted {s}, got {s}",
-                    .{ declared, typeStr(actual) },
+                    .{ declared, actual_str },
                 );
                 return self.setFailureParts(
                     .ParseError,
@@ -1622,8 +1626,8 @@ pub const Compiler = struct {
                         .span = last_expr.span,
                         .role = .primary,
                         .message = try std.fmt.allocPrint(self.alloc, "return type not {s} (got {s})", .{
-                            types.typeName(expected),
-                            types.typeName(actual),
+                            expected_str,
+                            actual_str,
                         }),
                     },
                     msg,
