@@ -156,8 +156,8 @@ fn pipes() do
   const p1 = 10 |> fn(x) x + 5
   print(p1)
 
-  # value |> :method is shorthand for value:method()
-  const p2 = "hello" |> _:upper
+  # value |> _:method() calls method on piped value
+  const p2 = "hello" |> _:upper()
   print(p2)
 
   # with arguments
@@ -198,7 +198,7 @@ fn error_handling() do
   const ok_result = safe_div(5, 1)
   const err_result = safe_div(5, 0)
   const is_ok = ok?!(ok_result)
-  const is_err = err?!((:err, err_result))
+  const is_err = err?!(err_result)
 
   print(result, fallback, is_ok, is_err)
 end
