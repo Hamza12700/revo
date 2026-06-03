@@ -97,7 +97,7 @@ pub fn compileLocalBinding(
     try syncLocalTableFields(self, slot, value);
 
     const inferred_type = if (type_name) |tn|
-        type_check.resolveTypeName(self, tn)
+        types_mod.resolveTypeName(self, tn)
     else
         type_check.inferExprType(self, value);
 
@@ -275,7 +275,7 @@ fn compileAssignSimple(
                             const actual = type_check.inferExprType(self, value);
                             const expected = if (field_offset < desc.fields.len) blk: {
                                 if (desc.fields[field_offset].type_atom) |ta| {
-                                    break :blk type_check.resolveTypeName(
+                                    break :blk types_mod.resolveTypeName(
                                         self,
                                         self.vm.atomName(ta),
                                     );
@@ -465,7 +465,7 @@ pub fn compileStruct(
                 try field_defs.append(self.alloc, .{
                     .name = item.field.name,
                     .field_type = if (item.field.type_name) |tn|
-                        type_check.resolveTypeName(self, tn)
+                        types_mod.resolveTypeName(self, tn)
                     else
                         types_mod.TypeInfo.any,
                     .type_name = item.field.type_name,

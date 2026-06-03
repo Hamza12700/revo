@@ -231,6 +231,25 @@ pub fn collectVariants(alloc: std.mem.Allocator, ti: TypeInfo, variants: *std.Ar
     }
 }
 
+pub fn resolveTypeName(ctx: anytype, name: []const u8) TypeInfo {
+    if (std.mem.eql(u8, name, "int")) return .int;
+    if (std.mem.eql(u8, name, "float")) return .float;
+    if (std.mem.eql(u8, name, "number")) return .{
+        .@"union" = &.{
+            .{ .name = "", .types = &.{.int} },
+            .{ .name = "", .types = &.{.float} },
+        },
+    };
+    if (std.mem.eql(u8, name, "string")) return .string;
+    if (std.mem.eql(u8, name, "bool")) return .bool;
+    if (std.mem.eql(u8, name, "void")) return .void;
+    if (std.mem.eql(u8, name, "any")) return .any;
+    if (std.mem.eql(u8, name, "function")) return .{ .function = &ANY_FN_SIG };
+    if (name.len > 0 and name[0] == ':') return .{ .atom = name };
+    if (ctx.resolveTypeAlias(name)) |aliased| return aliased;
+    return .{ .struct_type = name };
+}
+
 pub fn inferExprType(ctx: anytype, node: *const ast.Node) TypeInfo {
     return switch (node.expr) {
         .number => |n| if (n.is_float) .float else .int,
@@ -298,7 +317,7 @@ pub fn inferBlockResultType(ctx: anytype, exprs: []const *ast.Node) TypeInfo {
 
 pub fn evalTypeExpr(ctx: anytype, node: *const ast.Node) !TypeInfo {
     return switch (node.expr) {
-        .ident => |name| ctx.resolveTypeName(name),
+        .ident => |name| resolveTypeName(ctx, name),
         .hash => |name| TypeInfo{ .atom = name },
         .tuple => |items| blk: {
             var types = try std.ArrayList(TypeInfo).initCapacity(ctx.alloc, items.len);

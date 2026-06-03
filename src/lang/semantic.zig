@@ -150,43 +150,17 @@ const SemanticChecker = struct {
         return .any;
     }
 
-    pub fn resolveTypeName(self: *SemanticChecker, name: []const u8) types_mod.TypeInfo {
-        if (std.mem.eql(u8, name, "int")) return .int;
-        if (std.mem.eql(u8, name, "float")) return .float;
-        if (std.mem.eql(u8, name, "number")) return .{
-            .@"union" = &.{
-                .{ .name = "", .types = &.{.int} },
-                .{ .name = "", .types = &.{.float} },
-            },
-        };
-        if (std.mem.eql(u8, name, "string")) return .string;
-        if (std.mem.eql(u8, name, "bool")) return .bool;
-        if (std.mem.eql(u8, name, "void")) return .void;
-        if (std.mem.eql(u8, name, "any")) return .any;
-        // function as a type annotation means "any function"
-        if (std.mem.eql(u8, name, "function")) return .{ .function = &types_mod.ANY_FN_SIG };
-        if (name.len > 0 and name[0] == ':') return .{ .atom = name };
-        if (self.type_aliases.get(name)) |aliased| return aliased;
-        if (self.struct_layouts.get(name) != null) return .{ .struct_type = name };
-        return .{ .struct_type = name };
+    pub fn resolveTypeAlias(self: *SemanticChecker, name: []const u8) ?types_mod.TypeInfo {
+        return self.type_aliases.get(name);
     }
 
     fn evalTypeExpr(self: *SemanticChecker, node: *const ast.Node) !types_mod.TypeInfo {
         return try types_mod.evalTypeExpr(self, node);
     }
 
-    fn inferExprType(self: *SemanticChecker, node: *const ast.Node) types_mod.TypeInfo {
-        return switch (node.expr) {
-            .struct_def => |def| .{ .struct_type = def.name },
-            .type_alias => .void,
-            .fn_expr => .any,
-            else => types_mod.inferExprType(self, node),
-        };
-    }
-
     pub fn inferCallReturnType(self: *SemanticChecker, callee: *const ast.Node, args: []const *ast.Node) types_mod.TypeInfo {
         _ = args;
-        const callee_type = self.inferExprType(callee);
+        const callee_type = types_mod.inferExprType(self, callee);
         if (callee_type == .function) return callee_type.function.return_type;
         if (callee.expr == .ident) {
             if (self.lookup(callee.expr.ident)) |t| {
@@ -197,10 +171,10 @@ const SemanticChecker = struct {
     }
 
     pub fn inferFieldType(self: *SemanticChecker, object: *const ast.Node, name: []const u8) types_mod.TypeInfo {
-        return switch (self.inferExprType(object)) {
+        return switch (types_mod.inferExprType(self, object)) {
             .struct_type => |struct_name| blk: {
                 const layout = self.struct_layouts.get(struct_name) orelse break :blk .any;
-                for (layout) |f| if (std.mem.eql(u8, f.name, name)) break :blk if (f.field_type != .any) f.field_type else if (f.type_name) |tn| self.resolveTypeName(tn) else .any;
+                for (layout) |f| if (std.mem.eql(u8, f.name, name)) break :blk if (f.field_type != .any) f.field_type else if (f.type_name) |tn| types_mod.resolveTypeName(self, tn) else .any;
                 break :blk .any;
             },
             .string => if (std.mem.eql(u8, name, "len")) .int else .any,
@@ -215,11 +189,11 @@ const SemanticChecker = struct {
         defer param_types.deinit(self.alloc);
         for (fn_expr.params) |p| {
             try param_names.append(self.alloc, p.name);
-            try param_types.append(self.alloc, if (p.type_name) |tn| self.resolveTypeName(tn) else .any);
+            try param_types.append(self.alloc, if (p.type_name) |tn| types_mod.resolveTypeName(self, tn) else .any);
         }
         const params_slice = try param_types.toOwnedSlice(self.alloc);
         const names_slice = try param_names.toOwnedSlice(self.alloc);
-        const ret = if (fn_expr.return_type) |rt| self.resolveTypeName(rt) else .any;
+        const ret = if (fn_expr.return_type) |rt| types_mod.resolveTypeName(self, rt) else .any;
         const sig_ptr = try self.alloc.create(FnSig);
         sig_ptr.* = .{
             .param_names = names_slice,
@@ -268,7 +242,7 @@ const SemanticChecker = struct {
             .call => |call| try self.analyzeCall(call, node.span),
             .if_expr => |v| try self.analyzeIf(v, node.span),
             .ident => |name| try self.analyzeIdent(name, node.span),
-            else => self.inferExprType(node),
+            else => types_mod.inferExprType(self, node),
         };
     }
 
@@ -333,7 +307,7 @@ const SemanticChecker = struct {
                 try fields.append(self.alloc, .{
                     .name = field.name,
                     .type_name = field.type_name,
-                    .field_type = if (field.type_name) |tn| self.resolveTypeName(tn) else .any,
+                    .field_type = if (field.type_name) |tn| types_mod.resolveTypeName(self, tn) else .any,
                 });
             },
             .binding => |b| {
@@ -361,7 +335,7 @@ const SemanticChecker = struct {
             const sig = try self.makeFnSig(binding.value.expr.fn_expr);
             const fn_type: types_mod.TypeInfo = .{ .function = &sig.sig };
             if (binding.type_name) |type_name| {
-                const expected = self.resolveTypeName(type_name);
+                const expected = types_mod.resolveTypeName(self, type_name);
                 if (!types_mod.canCoerce(fn_type, expected)) {
                     try self.appendTypeMismatch(
                         binding.target.span,
@@ -380,7 +354,7 @@ const SemanticChecker = struct {
 
         const value_type = try self.analyzeNode(binding.value);
         if (binding.type_name) |type_name| {
-            const expected = self.resolveTypeName(type_name);
+            const expected = types_mod.resolveTypeName(self, type_name);
             if (!types_mod.canCoerce(value_type, expected)) {
                 try self.appendTypeMismatch(
                     binding.target.span,
@@ -417,7 +391,7 @@ const SemanticChecker = struct {
                 }
             },
             .field => |field| {
-                const object_type = self.inferExprType(field.object);
+                const object_type = types_mod.inferExprType(self, field.object);
                 if (object_type == .struct_type) {
                     const layout = self.struct_layouts.get(object_type.struct_type) orelse return .void;
                     for (layout) |f| {
@@ -446,7 +420,7 @@ const SemanticChecker = struct {
 
     fn analyzeCall(self: *SemanticChecker, call: anytype, span: ast.Span) !types_mod.TypeInfo {
         _ = span;
-        const callee_type = self.inferExprType(call.callee);
+        const callee_type = types_mod.inferExprType(self, call.callee);
         if (call.callee.expr == .ident and callee_type == .function) {
             const sig_ptr = callee_type.function;
             // "any function" sentinel,, can't validate params or return
@@ -554,13 +528,13 @@ const SemanticChecker = struct {
     fn appendFieldMismatch(self: *SemanticChecker, field: anytype, expected: types_mod.TypeInfo, actual: types_mod.TypeInfo) !void {
         const msg = try std.fmt.allocPrint(self.alloc, "field `{s}` on `{s}` expected {s}, got {s}", .{
             field.name,
-            types_mod.typeName(self.inferExprType(field.object)),
+            types_mod.typeName(types_mod.inferExprType(self, field.object)),
             types_mod.typeName(expected),
             types_mod.typeName(actual),
         });
         try self.appendError(msg, field.object.span, try std.fmt.allocPrint(self.alloc, "field {s} on {s} is not {s} (got {s})", .{
             field.name,
-            types_mod.typeName(self.inferExprType(field.object)),
+            types_mod.typeName(types_mod.inferExprType(self, field.object)),
             types_mod.typeName(expected),
             types_mod.typeName(actual),
         }));

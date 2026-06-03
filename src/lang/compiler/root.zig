@@ -181,7 +181,8 @@ pub const Compiler = struct {
 
     // ctx interface for types.zig
     pub const inferIdentType = type_check.inferIdentType;
-    pub const resolveTypeName = type_check.resolveTypeName;
+    pub const resolveTypeName = types.resolveTypeName;
+    pub const resolveTypeAlias = type_check.resolveTypeAlias;
     pub const inferCallReturnType = type_check.inferCallReturnType;
     pub const inferFieldType = type_check.inferFieldType;
     pub const inferFnType = type_check.inferFnType;
@@ -981,7 +982,7 @@ pub const Compiler = struct {
                 );
                 type_check.checkType(
                     self.alloc,
-                    type_check.resolveTypeName(self, expected_type),
+                    types.resolveTypeName(self, expected_type),
                     actual_type,
                     reordered_args[i].span,
                 ) catch |err| switch (err) {
@@ -1389,7 +1390,7 @@ pub const Compiler = struct {
             if (param.type_name) |type_name| {
                 s.type_hints.append(self.alloc, .{
                     .name = param.name,
-                    .type_info = type_check.resolveTypeName(self, type_name),
+                    .type_info = types.resolveTypeName(self, type_name),
                 }) catch |err| {
                     s.deinit(self.alloc);
                     return err;
@@ -1575,7 +1576,7 @@ pub const Compiler = struct {
         const fn_state = state_mod.currentFunctionState(self) orelse return;
         const declared = fn_state.return_type orelse return;
         const actual = type_check.inferExprType(self, val);
-        const expected = type_check.resolveTypeName(self, declared);
+        const expected = types.resolveTypeName(self, declared);
         type_check.checkType(self.alloc, expected, actual, val.span) catch |err| switch (err) {
             error.TypeError => {
                 const msg = try std.fmt.allocPrint(
@@ -1612,7 +1613,7 @@ pub const Compiler = struct {
         };
         if (last_expr.expr == .return_expr) return;
         const actual = type_check.inferExprType(self, last_expr);
-        const expected = type_check.resolveTypeName(self, declared);
+        const expected = types.resolveTypeName(self, declared);
         type_check.checkType(self.alloc, expected, actual, last_expr.span) catch |err| switch (err) {
             error.TypeError => {
                 const msg = try std.fmt.allocPrint(

@@ -17,7 +17,7 @@ pub const TypeError = struct {
 pub fn storedTypeName(self: *Compiler, t: TypeInfo) ?[]const u8 {
     if (t == .any or t == .function or t == .tuple or t == .@"union") return null;
     const name = types_mod.typeName(t);
-    const roundtrip = resolveTypeName(self, name);
+    const roundtrip = types_mod.resolveTypeName(self, name);
     return if (roundtrip.eql(t)) name else null;
 }
 
@@ -36,7 +36,7 @@ pub const inferExprType = types_mod.inferExprType;
 fn inferVarType(self: *Compiler, name: []const u8) TypeInfo {
     if (state_mod.resolveLocalTypeHint(self, name)) |hint| return hint;
     const local = state_mod.resolveLocalVar(self, name) orelse return inferTypeMap(self, name);
-    if (local.type_name) |tn| return resolveTypeName(self, tn);
+    if (local.type_name) |tn| return types_mod.resolveTypeName(self, tn);
     return inferTypeMap(self, name);
 }
 
@@ -44,7 +44,7 @@ fn inferTypeMap(self: *Compiler, name: []const u8) TypeInfo {
     if (self.type_aliases.get(name)) |aliased| return aliased;
     const fn_state = state_mod.currentFunctionState(self) orelse return .any;
     const type_str = fn_state.var_types.get(name) orelse return .any;
-    return resolveTypeName(self, type_str orelse return .any);
+    return types_mod.resolveTypeName(self, type_str orelse return .any);
 }
 
 pub fn inferIdentType(self: *Compiler, name: []const u8) TypeInfo {
@@ -58,7 +58,7 @@ pub fn inferCallReturnType(self: *Compiler, callee: *const Node, args: []const *
 
     if (callee.expr == .ident) {
         const sig = state_mod.findFnSignature(self, callee.expr.ident) orelse return .any;
-        return if (sig.return_type) |ret| resolveTypeName(self, ret) else .any;
+        return if (sig.return_type) |ret| types_mod.resolveTypeName(self, ret) else .any;
     }
 
     return .any;
@@ -81,10 +81,10 @@ pub fn inferFnType(self: *Compiler, params: []const ast.FnParam, return_type: ?[
     var param_types = std.ArrayList(TypeInfo).initCapacity(self.alloc, params.len) catch return .any;
     defer param_types.deinit(self.alloc);
     for (params) |p| {
-        const pt = if (p.type_name) |tn| resolveTypeName(self, tn) else .any;
+        const pt = if (p.type_name) |tn| types_mod.resolveTypeName(self, tn) else .any;
         param_types.append(self.alloc, pt) catch return .any;
     }
-    const ret = if (return_type) |rt| resolveTypeName(self, rt) else .any;
+    const ret = if (return_type) |rt| types_mod.resolveTypeName(self, rt) else .any;
     const sig = self.alloc.create(FunctionSignature) catch return .any;
     sig.* = .{
         .params = param_types.toOwnedSlice(self.alloc) catch return .any,
@@ -94,7 +94,7 @@ pub fn inferFnType(self: *Compiler, params: []const ast.FnParam, return_type: ?[
 }
 
 pub fn validateBindingType(self: *Compiler, type_name: []const u8, value: *const Node) !void {
-    const expected = resolveTypeName(self, type_name);
+    const expected = types_mod.resolveTypeName(self, type_name);
     const actual = inferExprType(self, value);
     // atom literal assigned to atom-union alias
     if (actual == .atom and expected == .@"union") {
@@ -110,27 +110,8 @@ pub const TypeExprError = error{
     UnsupportedSyntax,
 };
 
-pub fn resolveTypeName(self: *Compiler, name: []const u8) TypeInfo {
-    if (std.mem.eql(u8, name, "int")) return .int;
-    if (std.mem.eql(u8, name, "float")) return .float;
-    if (std.mem.eql(u8, name, "number")) return numberType();
-    if (std.mem.eql(u8, name, "string")) return .string;
-    if (std.mem.eql(u8, name, "bool")) return .bool;
-    if (std.mem.eql(u8, name, "void")) return .void;
-    if (std.mem.eql(u8, name, "any")) return .any;
-    if (std.mem.eql(u8, name, "function")) return .{ .function = &types_mod.ANY_FN_SIG };
-    if (name.len > 0 and name[0] == ':') return .{ .atom = name };
-    if (self.type_aliases.get(name)) |aliased| return aliased;
-    return .{ .struct_type = name };
-}
-
-fn numberType() TypeInfo {
-    return TypeInfo{
-        .@"union" = &.{
-            .{ .name = "", .types = &.{TypeInfo.int} },
-            .{ .name = "", .types = &.{TypeInfo.float} },
-        },
-    };
+pub fn resolveTypeAlias(self: *Compiler, name: []const u8) ?TypeInfo {
+    return self.type_aliases.get(name);
 }
 
 pub fn evalUnionVariant(self: *Compiler, node: *const Node) TypeExprError!types_mod.UnionVariant {
