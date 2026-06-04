@@ -89,7 +89,7 @@ pub fn writeTuple(t: *revo.tuple.Tuple, writer: *std.Io.Writer, vm: *revo.VM, mo
 
 pub fn writeTable(tbl: *revo.table.Table, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) anyerror!void {
     try writer.writeAll("{ ");
-    const should_write_idx = tbl.hash_entries.count() != 0;
+    const should_write_idx = tbl.hash.count != 0;
     for (tbl.array.items, 0..) |val, idx| {
         if (should_write_idx) {
             try writeData(Data.new.num(idx), writer, vm, mode);
@@ -98,14 +98,17 @@ pub fn writeTable(tbl: *revo.table.Table, writer: *std.Io.Writer, vm: *revo.VM, 
         try writeData(val, writer, vm, mode);
         try writer.writeAll(", ");
     }
-    for (tbl.hash_order.items) |key| {
-        const val = tbl.hash_entries.get(key) orelse continue;
+    var cur = tbl.hash.first;
+    while (cur) |idx| {
+        const key = tbl.hash.buckets[idx].key;
+        const val = tbl.hash.buckets[idx].val;
         if (should_write_idx) {
             try writeData(key, writer, vm, mode);
             try writer.writeAll(": ");
         }
         try writeData(val, writer, vm, mode);
         try writer.writeAll(", ");
+        cur = tbl.hash.buckets[idx].next;
     }
     try writer.writeAll("}");
 }

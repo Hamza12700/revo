@@ -1570,7 +1570,10 @@ fn callStructConstructor(
                 instance.fields[i] = val;
             }
         }
-        for (init_table.hash_order.items) |k| {
+        var cur = init_table.hash.first;
+        while (cur) |hidx| {
+            const k = init_table.hash.buckets[hidx].key;
+            defer cur = init_table.hash.buckets[hidx].next;
             const k_atom = k.asAtom() orelse continue;
             if (desc.fieldIndex(k_atom) == null) {
                 try self.setRuntimeMessageFmt(

@@ -191,11 +191,10 @@ pub fn map_fn(args: []const Data, vm: *VM) !NativeResult {
                 try result_table.array.append(vm.runtime.alloc, fn_result);
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    const fn_result = try vm.callFunction(fn_data, &[_]Data{val});
-                    try result_table.putRaw(key, fn_result);
-                }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                const fn_result = try vm.callFunction(fn_data, &[_]Data{entry.val});
+                try result_table.putRaw(entry.key, fn_result);
             }
 
             return .okData(Data.new.table(result_table_id));
@@ -262,12 +261,11 @@ pub fn filter_fn(args: []const Data, vm: *VM) !NativeResult {
                 }
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    const fn_result = try vm.callFunction(fn_data, &[_]Data{val});
-                    if (isTruthy(fn_result)) {
-                        try result_table.putRaw(key, val);
-                    }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                const fn_result = try vm.callFunction(fn_data, &[_]Data{entry.val});
+                if (isTruthy(fn_result)) {
+                    try result_table.putRaw(entry.key, entry.val);
                 }
             }
 
@@ -313,10 +311,9 @@ pub fn reduce_fn(args: []const Data, vm: *VM) !NativeResult {
                 accumulator = try vm.callFunction(fn_data, &[_]Data{ accumulator, item });
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    accumulator = try vm.callFunction(fn_data, &[_]Data{ accumulator, val });
-                }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                accumulator = try vm.callFunction(fn_data, &[_]Data{ accumulator, entry.val });
             }
         },
         else => return .errType(0, "string, tuple, or table", dataToString(args[0])),
@@ -359,10 +356,9 @@ pub fn each_fn(args: []const Data, vm: *VM) !NativeResult {
                 _ = try vm.callFunction(fn_data, &[_]Data{item});
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    _ = try vm.callFunction(fn_data, &[_]Data{val});
-                }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                _ = try vm.callFunction(fn_data, &[_]Data{entry.val});
             }
         },
         else => return .errType(0, "string, tuple, or table", dataToString(args[0])),
@@ -414,12 +410,11 @@ pub fn find_fn(args: []const Data, vm: *VM) !NativeResult {
                 }
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    const fn_result = try vm.callFunction(fn_data, &[_]Data{val});
-                    if (isTruthy(fn_result)) {
-                        return .{ .ok = val };
-                    }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                const fn_result = try vm.callFunction(fn_data, &[_]Data{entry.val});
+                if (isTruthy(fn_result)) {
+                    return .{ .ok = entry.val };
                 }
             }
         },
@@ -472,12 +467,11 @@ pub fn all_fn(args: []const Data, vm: *VM) !NativeResult {
                 }
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    const fn_result = try vm.callFunction(fn_data, &[_]Data{val});
-                    if (!isTruthy(fn_result)) {
-                        return .{ .ok = Data.new.boolean(false) };
-                    }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                const fn_result = try vm.callFunction(fn_data, &[_]Data{entry.val});
+                if (!isTruthy(fn_result)) {
+                    return .{ .ok = Data.new.boolean(false) };
                 }
             }
         },
@@ -530,12 +524,11 @@ pub fn any_fn(args: []const Data, vm: *VM) !NativeResult {
                 }
             }
 
-            for (table.hash_order.items) |key| {
-                if (table.getRaw(key)) |val| {
-                    const fn_result = try vm.callFunction(fn_data, &[_]Data{val});
-                    if (isTruthy(fn_result)) {
-                        return .{ .ok = Data.new.boolean(true) };
-                    }
+            var hash_it = table.hash.orderedIterator();
+            while (hash_it.next()) |entry| {
+                const fn_result = try vm.callFunction(fn_data, &[_]Data{entry.val});
+                if (isTruthy(fn_result)) {
+                    return .{ .ok = Data.new.boolean(true) };
                 }
             }
         },

@@ -54,10 +54,10 @@ fn addFieldCompletions(
     const val = vm.globals.get(target_atom) orelse return;
     if (val.isTable()) {
         const table = try vm.tables.get(val.asTable().?);
-        var kit = table.hash_entries.keyIterator();
-        while (kit.next()) |key| {
-            if (key.isAtom()) {
-                const name = vm.atomName(key.asAtom().?);
+        var hash_it = table.hash.orderedIterator();
+        while (hash_it.next()) |entry| {
+            if (entry.key.isAtom()) {
+                const name = vm.atomName(entry.key.asAtom().?);
                 if (std.mem.startsWith(u8, name, prefix)) {
                     items.append(arena, .{
                         .label = name,

@@ -92,7 +92,7 @@ fn writeArrayJson(items: []const Data, vm: *VM, writer: *std.Io.Writer) anyerror
 
 fn writeTableJson(id: revo.memory.TableID, vm: *VM, writer: *std.Io.Writer) anyerror!void {
     const table = try vm.tables.get(id);
-    if (table.hash_entries.count() != 0) return error.UnsupportedJsonValue;
+    if (table.hash.count != 0) return error.UnsupportedJsonValue;
     return writeArrayJson(table.array.items, vm, writer);
 }
 

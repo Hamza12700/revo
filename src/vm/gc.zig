@@ -171,10 +171,11 @@ pub fn processMarkStack(self: *VM) void {
                 const table = self.tables.tables.items[id] orelse continue;
                 for (table.array.items) |entry| pushMark(self, entry);
 
-                var it = table.hash_entries.iterator();
-                while (it.next()) |entry| {
-                    pushMark(self, entry.key_ptr.*);
-                    pushMark(self, entry.value_ptr.*);
+                var cur = table.hash.first;
+                while (cur) |idx| {
+                    pushMark(self, table.hash.buckets[idx].key);
+                    pushMark(self, table.hash.buckets[idx].val);
+                    cur = table.hash.buckets[idx].next;
                 }
                 if (table.metatable) |mt|
                     self.tables.mark(mt, self);

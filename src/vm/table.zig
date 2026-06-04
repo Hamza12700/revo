@@ -134,33 +134,161 @@ pub const TablePool = struct {
 };
 
 pub const Table = struct {
-    const KeyContext = struct {
-        pub fn hash(_: @This(), key: Data) u64 {
-            var h = std.hash.Wyhash.init(0);
-            h.update(&[_]u8{@intCast(@intFromEnum(key.tag()))});
-            switch (key.tag()) {
-                .number => {
-                    const bits: u64 = key.rawBits();
-                    h.update(std.mem.asBytes(&bits));
-                },
-                else => {
-                    h.update(std.mem.asBytes(&key.unboxed()));
-                },
-            }
-            return h.final();
+    fn hashKey(key: Data) u64 {
+        var h = std.hash.Wyhash.init(0);
+        h.update(&[_]u8{@intCast(@intFromEnum(key.tag()))});
+        switch (key.tag()) {
+            .number => {
+                const bits: u64 = key.rawBits();
+                h.update(std.mem.asBytes(&bits));
+            },
+            else => {
+                h.update(std.mem.asBytes(&key.unboxed()));
+            },
+        }
+        return h.final();
+    }
+
+    /// open-addressing hash table with linear probing, power-of-2 sizing,
+    /// and an embedded doubly-linked list for insertion order iteration
+    ///
+    /// i didn't translate lua's implementation 1-1 -- it complicates insertion-deletion
+    ///     revo tables tend to be small and you would not often delete things individually
+    ///
+    /// i didn't use std.HashMap because insertion order has to be preserved
+    /// bench/table.rv:
+    ///     HashPart                   @ 0.627s
+    ///     std.HashMap and atom_order @ 0.912s
+    ///
+    /// this is the simplest, and likely fastest in practice, out of three
+    const HashPart = struct {
+        buckets: []Bucket = &.{},
+        count: u32 = 0,
+        first: ?u32 = null,
+        last: ?u32 = null,
+
+        const INIT_CAP = 4;
+        const MAX_LOAD = 75; // percent
+
+        const Bucket = struct {
+            status: enum(u8) { empty, occupied } = .empty,
+            key: Data = undefined,
+            val: Data = undefined,
+            next: ?u32 = null,
+            prev: ?u32 = null,
+        };
+
+        fn deinit(self: *HashPart, alloc: std.mem.Allocator) void {
+            alloc.free(self.buckets);
+            self.* = .{};
         }
 
-        pub fn eql(_: @This(), a: Data, b: Data) bool {
-            return keyEq(a, b);
+        fn lookup(self: *const HashPart, key: Data) ?u32 {
+            if (self.buckets.len == 0) return null;
+            const mask = @as(u32, @intCast(self.buckets.len - 1));
+            var idx = @as(u32, @truncate(hashKey(key))) & mask;
+            while (self.buckets[idx].status == .occupied) {
+                if (keyEq(self.buckets[idx].key, key)) return idx;
+                idx = (idx + 1) & mask;
+            }
+            return null;
+        }
+
+        fn get(self: *const HashPart, key: Data) ?Data {
+            const idx = self.lookup(key) orelse return null;
+            return self.buckets[idx].val;
+        }
+
+        fn getPtr(self: *HashPart, key: Data) ?*Data {
+            const idx = self.lookup(key) orelse return null;
+            return &self.buckets[idx].val;
+        }
+
+        fn getOrPut(self: *HashPart, alloc: std.mem.Allocator, key: Data) !*Data {
+            if (self.buckets.len == 0 or self.count * 100 > self.buckets.len * MAX_LOAD)
+                try self.grow(alloc);
+
+            const mask = @as(u32, @intCast(self.buckets.len - 1));
+            var idx = @as(u32, @truncate(hashKey(key))) & mask;
+            while (self.buckets[idx].status == .occupied) {
+                if (keyEq(self.buckets[idx].key, key))
+                    return &self.buckets[idx].val;
+                idx = (idx + 1) & mask;
+            }
+
+            self.buckets[idx] = .{
+                .status = .occupied,
+                .key = key,
+                .val = undefined,
+                .next = null,
+                .prev = self.last,
+            };
+            if (self.last) |l| self.buckets[l].next = idx else self.first = idx;
+            self.last = idx;
+            self.count += 1;
+
+            return &self.buckets[idx].val;
+        }
+
+        fn grow(self: *HashPart, alloc: std.mem.Allocator) !void {
+            const new_len = if (self.buckets.len == 0) @as(u32, INIT_CAP) else @as(u32, @truncate(self.buckets.len * 2));
+            const new_buckets = try alloc.alloc(Bucket, new_len);
+            @memset(new_buckets, .{});
+
+            var new_first: ?u32 = null;
+            var new_last: ?u32 = null;
+            var cur = self.first;
+
+            while (cur) |old_idx| {
+                const old = &self.buckets[old_idx];
+                var ni = @as(u32, @truncate(hashKey(old.key) & (new_len - 1)));
+                while (new_buckets[ni].status == .occupied)
+                    ni = (ni + 1) & (new_len - 1);
+
+                new_buckets[ni] = .{
+                    .status = .occupied,
+                    .key = old.key,
+                    .val = old.val,
+                    .next = null,
+                    .prev = new_last,
+                };
+                if (new_last) |l| new_buckets[l].next = ni else new_first = ni;
+                new_last = ni;
+                cur = old.next;
+            }
+
+            alloc.free(self.buckets);
+            self.buckets = new_buckets;
+            self.first = new_first;
+            self.last = new_last;
+        }
+
+        fn clone(self: *const HashPart, alloc: std.mem.Allocator) !HashPart {
+            if (self.buckets.len == 0) return .{};
+            const cp = try alloc.dupe(Bucket, self.buckets);
+            return .{ .buckets = cp, .count = self.count, .first = self.first, .last = self.last };
+        }
+
+        pub const OrderedIter = struct {
+            part: *const HashPart,
+            cur: ?u32,
+
+            pub fn next(it: *OrderedIter) ?struct { key: Data, val: Data } {
+                const idx = it.cur orelse return null;
+                const b = &it.part.buckets[idx];
+                it.cur = b.next;
+                return .{ .key = b.key, .val = b.val };
+            }
+        };
+
+        pub fn orderedIterator(self: *const HashPart) OrderedIter {
+            return .{ .part = self, .cur = self.first };
         }
     };
 
-    const HashEntries = std.HashMap(Data, Data, KeyContext, std.hash_map.default_max_load_percentage);
-
     alloc: std.mem.Allocator,
     array: std.ArrayList(Data),
-    hash_entries: HashEntries,
-    hash_order: std.ArrayList(Data),
+    hash: HashPart,
     metatable: ?memory.TableID = null,
     ic_version: usize = 0,
     metamethod_cache: u64 = 0,
@@ -169,15 +297,13 @@ pub const Table = struct {
         return .{
             .alloc = alloc,
             .array = try std.ArrayList(Data).initCapacity(alloc, 0),
-            .hash_entries = HashEntries.init(alloc),
-            .hash_order = try std.ArrayList(Data).initCapacity(alloc, 0),
+            .hash = .{},
         };
     }
 
     pub fn deinit(self: *Table) void {
         self.array.deinit(self.alloc);
-        self.hash_entries.deinit();
-        self.hash_order.deinit(self.alloc);
+        self.hash.deinit(self.alloc);
     }
 
     fn keyEq(a: Data, b: Data) bool {
@@ -232,12 +358,8 @@ pub const Table = struct {
             } // else fallback to hash
         }
 
-        if (self.hash_entries.getPtr(key)) |entry_val| {
-            entry_val.* = val;
-            return;
-        }
-        try self.hash_entries.put(key, val);
-        try self.hash_order.append(self.alloc, key);
+        const entry = try self.hash.getOrPut(self.alloc, key);
+        entry.* = val;
     }
 
     pub inline fn push(self: *Table, val: Data) !void {
@@ -250,7 +372,7 @@ pub const Table = struct {
                 return self.array.items[idx];
             }
         }
-        return self.hash_entries.get(key);
+        return self.hash.get(key);
     }
 
     const MAX_TAG_LOOP = 200;
@@ -279,23 +401,22 @@ pub const Table = struct {
         for (self.array.items) |entry|
             vm.markData(entry);
 
-        var it = self.hash_entries.iterator();
-        while (it.next()) |entry| {
-            vm.markData(entry.key_ptr.*);
-            vm.markData(entry.value_ptr.*);
+        var cur = self.hash.first;
+        while (cur) |idx| {
+            vm.markData(self.hash.buckets[idx].key);
+            vm.markData(self.hash.buckets[idx].val);
+            cur = self.hash.buckets[idx].next;
         }
     }
 
     pub fn count(self: *const Table) usize {
-        var n: usize = self.hash_entries.count();
-        for (self.array.items) |_| {
-            n += 1;
-        }
-        return n;
+        return self.array.items.len + self.hash.count;
     }
 
     pub fn bytes(self: *const Table) usize {
-        return 64 + 16 * self.count();
+        const array_bytes = self.array.items.len * @sizeOf(Data);
+        const hash_bytes = self.hash.buckets.len * @sizeOf(HashPart.Bucket);
+        return @sizeOf(Table) + array_bytes + hash_bytes;
     }
 
     pub const write = revo.vm.print.writeTable;
@@ -408,7 +529,7 @@ test "putRaw: integer key > len goes to hash" {
 
     try table.putRaw(Data.new.num(5), Data.new.num(99));
     try std.testing.expectEqual(@as(usize, 1), table.array.items.len);
-    try std.testing.expectEqual(Data.new.num(99), table.hash_entries.get(Data.new.num(5)).?);
+    try std.testing.expectEqual(Data.new.num(99), table.hash.get(Data.new.num(5)).?);
 }
 
 test "putRaw: negative integer key always goes to hash" {
@@ -418,7 +539,7 @@ test "putRaw: negative integer key always goes to hash" {
 
     try table.putRaw(Data.new.num(-1), Data.new.num(99));
     try std.testing.expectEqual(@as(usize, 1), table.array.items.len);
-    try std.testing.expectEqual(Data.new.num(99), table.hash_entries.get(Data.new.num(-1)).?);
+    try std.testing.expectEqual(Data.new.num(99), table.hash.get(Data.new.num(-1)).?);
 }
 
 test "putRaw: float key always goes to hash" {
@@ -427,7 +548,7 @@ test "putRaw: float key always goes to hash" {
 
     try table.putRaw(Data.new.num(1.5), Data.new.num(99));
     try std.testing.expectEqual(@as(usize, 0), table.array.items.len);
-    try std.testing.expectEqual(Data.new.num(99), table.hash_entries.get(Data.new.num(1.5)).?);
+    try std.testing.expectEqual(Data.new.num(99), table.hash.get(Data.new.num(1.5)).?);
 }
 
 test "putRaw: NaN and Infinity keys go to hash" {
@@ -437,7 +558,7 @@ test "putRaw: NaN and Infinity keys go to hash" {
     try table.putRaw(Data.new.num(std.math.nan(f64)), Data.new.num(1));
     try table.putRaw(Data.new.num(std.math.inf(f64)), Data.new.num(2));
     try std.testing.expectEqual(@as(usize, 0), table.array.items.len);
-    try std.testing.expectEqual(@as(usize, 2), table.hash_entries.count());
+    try std.testing.expectEqual(@as(usize, 2), table.hash.count);
 }
 
 test "putRaw: getRaw retrieves from array for integer keys" {
@@ -471,7 +592,7 @@ test "putRaw: integer key > len in empty table goes to hash" {
 
     try table.putRaw(Data.new.num(6), Data.new.num(42));
     try std.testing.expectEqual(@as(usize, 1), table.array.items.len);
-    try std.testing.expectEqual(Data.new.num(42), table.hash_entries.get(Data.new.num(6)).?);
+    try std.testing.expectEqual(Data.new.num(42), table.hash.get(Data.new.num(6)).?);
 
     try table.putRaw(Data.new.num(1), Data.new.num(20));
     try std.testing.expectEqual(@as(usize, 2), table.array.items.len);

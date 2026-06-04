@@ -414,8 +414,9 @@ fn keys(args: []const Data, vm: *VM) !NativeResult {
         try keys_list.append(vm.runtime.alloc, Data.new.num(idx));
     }
 
-    for (table.hash_order.items) |key| {
-        try keys_list.append(vm.runtime.alloc, key);
+    var hash_it = table.hash.orderedIterator();
+    while (hash_it.next()) |entry| {
+        try keys_list.append(vm.runtime.alloc, entry.key);
     }
 
     const result_table = try vm.tables.create();
@@ -440,10 +441,9 @@ fn values(args: []const Data, vm: *VM) !NativeResult {
     for (table.array.items) |val|
         try values_list.append(vm.runtime.alloc, val);
 
-    for (table.hash_order.items) |key| {
-        if (table.hash_entries.get(key)) |val| {
-            try values_list.append(vm.runtime.alloc, val);
-        }
+    var hash_it = table.hash.orderedIterator();
+    while (hash_it.next()) |entry| {
+        try values_list.append(vm.runtime.alloc, entry.val);
     }
 
     const result_table = try vm.tables.create();
@@ -485,11 +485,10 @@ fn copy(args: []const Data, vm: *VM) !NativeResult {
 
     try new_t.array.appendSlice(vm.runtime.alloc, table.array.items);
 
-    var hash_iter = table.hash_entries.iterator();
-    while (hash_iter.next()) |entry| {
-        try new_t.putRaw(entry.key_ptr.*, entry.value_ptr.*);
+    var hash_it = table.hash.orderedIterator();
+    while (hash_it.next()) |entry| {
+        try new_t.putRaw(entry.key, entry.val);
     }
-    try new_t.hash_order.appendSlice(vm.runtime.alloc, table.hash_order.items);
 
     return .okData(Data.new.table(new_table));
 }
@@ -511,16 +510,14 @@ fn merge(args: []const Data, vm: *VM) !NativeResult {
     try result.array.appendSlice(vm.runtime.alloc, table1.array.items);
     try result.array.appendSlice(vm.runtime.alloc, table2.array.items);
 
-    var hash_iter1 = table1.hash_entries.iterator();
-    while (hash_iter1.next()) |entry| {
-        try result.putRaw(entry.key_ptr.*, entry.value_ptr.*);
+    var hash_it1 = table1.hash.orderedIterator();
+    while (hash_it1.next()) |entry| {
+        try result.putRaw(entry.key, entry.val);
     }
-    var hash_iter2 = table2.hash_entries.iterator();
-    while (hash_iter2.next()) |entry| {
-        try result.putRaw(entry.key_ptr.*, entry.value_ptr.*);
+    var hash_it2 = table2.hash.orderedIterator();
+    while (hash_it2.next()) |entry| {
+        try result.putRaw(entry.key, entry.val);
     }
-    try result.hash_order.appendSlice(vm.runtime.alloc, table1.hash_order.items);
-    try result.hash_order.appendSlice(vm.runtime.alloc, table2.hash_order.items);
 
     return .okData(Data.new.table(result_table));
 }
@@ -560,13 +557,13 @@ fn tableAdd(args: []const Data, vm: *VM) !NativeResult {
     const new_id = try vm.tables.create();
     const new_t = try vm.tables.get(new_id);
 
-    var hash_iter = left.hash_entries.iterator();
-    while (hash_iter.next()) |entry| {
-        try new_t.putRaw(entry.key_ptr.*, entry.value_ptr.*);
+    var hash_it = left.hash.orderedIterator();
+    while (hash_it.next()) |entry| {
+        try new_t.putRaw(entry.key, entry.val);
     }
-    hash_iter = right.hash_entries.iterator();
-    while (hash_iter.next()) |entry| {
-        try new_t.putRaw(entry.key_ptr.*, entry.value_ptr.*);
+    hash_it = right.hash.orderedIterator();
+    while (hash_it.next()) |entry| {
+        try new_t.putRaw(entry.key, entry.val);
     }
     return .okData(Data.new.table(new_id));
 }
