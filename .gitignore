@@ -6,3 +6,5 @@ zig-out
 .zig-cache
 /zig-pkg
 __pycache__
+/examples/markov/data-smaller.txt
+/examples/markov/data.txt

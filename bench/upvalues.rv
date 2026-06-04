@@ -1,0 +1,15 @@
+fn shallow(count) do
+    let x = 0
+    for i in 0..count do
+        let f = fn() x + i
+        x = f()
+    end
+    x
+end
+
+print(shallow(100))
+
+let t0 = time.monotonic_ns()
+let r1 = shallow(10000)
+let t1 = time.monotonic_ns()
+print("bench:", r1, t1 - t0)
