@@ -257,6 +257,12 @@ pub fn collectVariants(alloc: std.mem.Allocator, ti: TypeInfo, variants: *std.Ar
 pub fn resolveTypeName(ctx: anytype, name: []const u8) TypeInfo {
     if (std.mem.eql(u8, name, "int")) return .int;
     if (std.mem.eql(u8, name, "float")) return .float;
+    if (std.mem.eql(u8, name, "num")) return .{
+        .@"union" = &.{
+            .{ .name = "", .types = &.{.int} },
+            .{ .name = "", .types = &.{.float} },
+        },
+    };
     if (std.mem.eql(u8, name, "number")) return .{
         .@"union" = &.{
             .{ .name = "", .types = &.{.int} },

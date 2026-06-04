@@ -1306,11 +1306,16 @@ pub const Compiler = struct {
                 binding.value,
                 "binding",
             );
+            try values.declarePatternLocals(
+                self,
+                binding.target,
+                kind != .con,
+            );
         }
 
         try self.compile(binding.value, true);
         const src_idx = self.active_registers - 1;
-        try values.bindPattern(self, binding.target, src_idx, kind);
+        try values.bindDeclaredPattern(self, binding.target, src_idx, kind);
     }
 
     pub fn compileFn(

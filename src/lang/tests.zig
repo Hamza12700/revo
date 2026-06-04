@@ -1926,6 +1926,23 @@ test "tuple binding mismatch reports item counts" {
     );
 }
 
+test "tuple let binding initializes locals" {
+    try t.top_number(
+        \\ let a, b = (1, 2)
+        \\ a + b
+    , 3);
+}
+
+test "num alias works in fn and method signatures" {
+    try t.top_number(
+        \\ struct Chain {
+        \\     fn take(self, count: num) count,
+        \\ }
+        \\ const c = Chain{}
+        \\ c:take(50)
+    , 50);
+}
+
 test "typed binding label names the expected type" {
     var vm = try VM.init(t.runtime());
     defer vm.deinit();

@@ -109,6 +109,64 @@ pub fn compileLocalBinding(
     try emit.emit(self, .bind_local, slot);
 }
 
+pub fn bindDeclaredPattern(
+    self: *Compiler,
+    pattern: *const Node,
+    source_idx: usize,
+    kind: BindingKind,
+) !void {
+    switch (pattern.expr) {
+        .ident => |name| {
+            if (ast.isDiscardName(name)) return;
+            const mv: Instruction = .{
+                .op = .move,
+                .a = try toRegister(self.active_registers),
+                .b = try toRegister(source_idx),
+            };
+            try emit.appendRecorded(self, mv);
+            self.active_registers += 1;
+            const slot = try state.reuseOrDeclareLocal(self, name, kind != .con);
+            state.markLocalInitialized(self, slot);
+            try emit.emit(self, .bind_local, slot);
+            state.reserveLocalSlots(self);
+        },
+        .tuple_pattern => |items| {
+            for (items, 0..) |item, idx| {
+                const mv: Instruction = .{
+                    .op = .move,
+                    .a = try toRegister(self.active_registers),
+                    .b = try toRegister(source_idx),
+                };
+                try emit.appendRecorded(self, mv);
+                self.active_registers += 1;
+                try emit.emit(self, .tuple_get_const, idx);
+                try bindDeclaredPattern(self, item, self.active_registers - 1, kind);
+            }
+        },
+        else => {},
+    }
+}
+
+pub fn declarePatternLocals(
+    self: *Compiler,
+    pattern: *const Node,
+    mutable: bool,
+) !void {
+    switch (pattern.expr) {
+        .ident => |name| {
+            if (ast.isDiscardName(name)) return;
+            _ = try state.reuseOrDeclareLocal(self, name, mutable);
+            state.reserveLocalSlots(self);
+        },
+        .tuple_pattern => |items| {
+            for (items) |item| {
+                try declarePatternLocals(self, item, mutable);
+            }
+        },
+        else => {},
+    }
+}
+
 pub fn bindPattern(
     self: *Compiler,
     pattern: *const Node,
