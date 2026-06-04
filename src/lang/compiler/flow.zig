@@ -671,7 +671,14 @@ pub fn compileIf(
         try validateIfBranchTypes(self, then_type, else_type, then_expr, branch);
     } else try emit.nil(self);
     state.popScope(self);
-    std.debug.assert(then_registers == self.active_registers);
+
+    if (then_registers != self.active_registers) {
+        // then-branch may differ from that nil
+        while (self.active_registers < then_registers)
+            try emit.nil(self);
+        while (self.active_registers > then_registers)
+            try emit.regRelease(self);
+    }
     emit.patchJump(self, end_jump);
     self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
 }

@@ -109,26 +109,6 @@ pub fn compileLocalBinding(
     try emit.emit(self, .bind_local, slot);
 }
 
-fn storePatternItem(self: *Compiler, name: []const u8, kind: BindingKind) !void {
-    switch (kind) {
-        .global => try emit.emit(self, .store_global, try self.vm.internAtom(name)),
-        .let => {
-            if (state.resolveLocal(self, name)) |slot| {
-                try emit.emit(self, .store_local, slot);
-            } else {
-                try emit.emit(self, .store_global, try self.vm.internAtom(name));
-            }
-        },
-        .con => {
-            if (state.resolveLocal(self, name)) |slot| {
-                try emit.emit(self, .bind_local, slot);
-            } else {
-                try emit.emit(self, .store_global_const, try self.vm.internAtom(name));
-            }
-        },
-    }
-}
-
 pub fn bindPattern(
     self: *Compiler,
     pattern: *const Node,
@@ -145,9 +125,14 @@ pub fn bindPattern(
             };
             try emit.appendRecorded(self, mv);
             self.active_registers += 1;
-            try storePatternItem(self, name, kind);
+            try emit.emit(
+                self,
+                if (kind == .con) .store_global_const else .store_global,
+                try self.vm.internAtom(name),
+            );
         },
         .tuple_pattern => |items| {
+            const is_mutable = kind != .con;
             for (items, 0..) |item, idx| {
                 switch (item.expr) {
                     .ident => |name| {
@@ -160,7 +145,11 @@ pub fn bindPattern(
                         try emit.appendRecorded(self, mv);
                         self.active_registers += 1;
                         try emit.emit(self, .tuple_get_const, idx);
-                        try storePatternItem(self, name, kind);
+                        try emit.emit(
+                            self,
+                            if (is_mutable) .store_global else .store_global_const,
+                            try self.vm.internAtom(name),
+                        );
                     },
                     .tuple_pattern => {
                         const mv: Instruction = .{
@@ -172,34 +161,6 @@ pub fn bindPattern(
                         self.active_registers += 1;
                         try emit.emit(self, .tuple_get_const, idx);
                         try bindPattern(self, item, self.active_registers - 1, kind);
-                    },
-                    else => {},
-                }
-            }
-        },
-        else => {},
-    }
-}
-
-pub fn predeclarePatternLocals(
-    self: *Compiler,
-    pattern: *const Node,
-    kind: BindingKind,
-) !void {
-    switch (pattern.expr) {
-        .ident => |name| {
-            if (ast.isDiscardName(name)) return;
-            _ = try state.declareLocal(self, name, kind == .let);
-        },
-        .tuple_pattern => |items| {
-            for (items) |item| {
-                switch (item.expr) {
-                    .ident => |name| {
-                        if (ast.isDiscardName(name)) continue;
-                        _ = try state.declareLocal(self, name, kind == .let);
-                    },
-                    .tuple_pattern => {
-                        try predeclarePatternLocals(self, item, kind);
                     },
                     else => {},
                 }
@@ -265,12 +226,16 @@ fn compileAssignSimple(
             } else if (try state.resolveUpvalue(self, name)) |slot| {
                 try emit.emit(self, .store_upval, slot);
             } else {
-                const msg = try std.fmt.allocPrint(
-                    self.alloc,
-                    "assignment target `{s}` is not declared",
-                    .{name},
-                );
-                return self.fail(.InvalidAssignmentTarget, target, msg);
+                if (self.functions.items.len == 1) {
+                    try emit.emit(self, .store_global, try self.vm.internAtom(name));
+                } else {
+                    const msg = try std.fmt.allocPrint(
+                        self.alloc,
+                        "assignment target `{s}` is not declared",
+                        .{name},
+                    );
+                    return self.fail(.InvalidAssignmentTarget, target, msg);
+                }
             }
         },
         .field => |field| {
