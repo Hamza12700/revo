@@ -53,6 +53,11 @@ pub fn runReport(self: *VM) !EvalResult {
 
 /// quite a hefty struct,,, but its worth it
 pub const Fiber = struct {
+    pub const OpenUpvalueRef = struct {
+        slot_index: usize,
+        id: root.functions.UpvalueID,
+    };
+
     pub const WaitKey = struct {
         wait_id: u64,
     };
@@ -73,7 +78,7 @@ pub const Fiber = struct {
     registers: *[MAX_REGISTERS]Data,
     registers_len: usize = 0,
     frames: std.ArrayList(Frame),
-    open_upvalues: ?root.functions.UpvalueID = null, // head of intrusive linked list
+    open_upvalues: std.ArrayList(OpenUpvalueRef),
 
     running: bool,
     state: State,
@@ -94,7 +99,7 @@ pub const Fiber = struct {
             .debug_info_id = null,
             .registers = try alloc.create([MAX_REGISTERS]Data),
             .frames = try std.ArrayList(Frame).initCapacity(alloc, MAX_FRAMES),
-            .open_upvalues = null,
+            .open_upvalues = try std.ArrayList(OpenUpvalueRef).initCapacity(alloc, 8),
             .running = false,
             .state = .ready,
             .in_runq = false,
@@ -108,6 +113,7 @@ pub const Fiber = struct {
     pub fn deinit(self: *Fiber, alloc: std.mem.Allocator) void {
         alloc.destroy(self.registers);
         self.frames.deinit(alloc);
+        self.open_upvalues.deinit(alloc);
         self.waiters.deinit(alloc);
     }
 
@@ -246,7 +252,7 @@ pub fn init(runtime: revo.Runtime) !VM {
         .registers = try runtime.alloc.create([MAX_REGISTERS]Data),
         .frames = try std.ArrayList(Frame).initCapacity(runtime.alloc, 4),
         .running = false,
-        .open_upvalues = null,
+        .open_upvalues = try std.ArrayList(Fiber.OpenUpvalueRef).initCapacity(runtime.alloc, 8),
         .state = .ready,
         .in_runq = false,
         .wait = .none,
@@ -745,78 +751,39 @@ pub inline fn currentClosure(self: *VM) !?*root.functions.Closure {
 }
 
 pub inline fn captureUpvalue(self: *VM, slot_index: usize) !root.functions.UpvalueID {
-    const fiber = self.currentFiber();
-    var prev: ?root.functions.UpvalueID = null;
-    var curr = fiber.open_upvalues;
-
-    while (curr) |id| {
-        const upvalue = try self.functions.getUpvalue(id);
-        const si = upvalue.open_index orelse unreachable; // open upvalues always have open_index set
-        if (si == slot_index) return id;
-        if (si > slot_index) {
-            const new_id = try self.functions.createUpvalue(.{
+    const open = &self.currentFiber().open_upvalues;
+    for (open.items, 0..) |entry, idx| {
+        if (entry.slot_index == slot_index) return entry.id;
+        if (entry.slot_index > slot_index) {
+            const upvalue_id = try self.functions.createUpvalue(.{
                 .open_index = slot_index,
                 .closed = revo.core_atoms.data(.missing),
-                .next_open = id,
             });
-            if (prev) |p| {
-                var prev_up = try self.functions.getUpvalue(p);
-                prev_up.next_open = new_id;
-            } else {
-                fiber.open_upvalues = new_id;
-            }
-            return new_id;
+            try open.insert(self.runtime.alloc, idx, .{ .slot_index = slot_index, .id = upvalue_id });
+            return upvalue_id;
         }
-        prev = id;
-        curr = upvalue.next_open;
     }
-
-    const new_id = try self.functions.createUpvalue(.{
+    const upvalue_id = try self.functions.createUpvalue(.{
         .open_index = slot_index,
         .closed = revo.core_atoms.data(.missing),
-        .next_open = null,
     });
-    if (prev) |p| {
-        var prev_up = try self.functions.getUpvalue(p);
-        prev_up.next_open = new_id;
-    } else {
-        fiber.open_upvalues = new_id;
-    }
-    return new_id;
+    try open.append(self.runtime.alloc, .{ .slot_index = slot_index, .id = upvalue_id });
+    return upvalue_id;
 }
 
 fn closeUpvalues(self: *VM, from_index: usize) !void {
-    const fiber = self.currentFiber();
-    var prev: ?root.functions.UpvalueID = null;
-    var curr = fiber.open_upvalues;
+    const open = &self.currentFiber().open_upvalues;
+    while (open.items.len > 0) {
+        const last_idx = open.items.len - 1;
+        const entry = open.items[last_idx];
+        if (entry.slot_index < from_index) break;
 
-    // find the split point: first entry with slot_index >= from_index
-    while (curr) |id| {
-        const upvalue = try self.functions.getUpvalue(id);
-        const si = upvalue.open_index orelse unreachable;
-        if (si >= from_index) {
-            // detach tail from list
-            if (prev) |p| {
-                var prev_up = try self.functions.getUpvalue(p);
-                prev_up.next_open = null;
-            } else {
-                fiber.open_upvalues = null;
-            }
-            // close all entries from curr to end
-            var close_id: ?root.functions.UpvalueID = id;
-            while (close_id) |cid| {
-                const close_up = try self.functions.getUpvalue(cid);
-                if (close_up.open_index) |slot_index| {
-                    close_up.closed = fiber.registers[slot_index];
-                    close_up.open_index = null;
-                }
-                close_id = close_up.next_open;
-                close_up.next_open = null; // detach from list
-            }
-            return;
+        const upvalue = try self.functions.getUpvalue(entry.id);
+        if (upvalue.open_index) |slot_index| {
+            upvalue.closed = self.currentFiber().registers[slot_index];
+            upvalue.open_index = null;
         }
-        prev = id;
-        curr = upvalue.next_open;
+        _ = open.pop();
     }
 }
 
@@ -856,7 +823,6 @@ fn detachClosureForFiber(self: *VM, closure_id: mem.FunctionID) !mem.FunctionID 
             try self.functions.createUpvalue(.{
                 .open_index = null,
                 .closed = try self.loadUpvalueData(upvalue_id),
-                .next_open = null,
             }),
         );
     }
@@ -1747,7 +1713,7 @@ pub fn returnRegister(
     );
     const frame = fiber.frames.pop() orelse unreachable;
 
-    if (fiber.open_upvalues != null)
+    if (fiber.open_upvalues.items.len > 0)
         try self.closeUpvalues(frame.base);
 
     fiber.pc = frame.return_addr;

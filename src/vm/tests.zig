@@ -311,7 +311,6 @@ test "vm gc keeps rooted closures and captured tables alive" {
     const upvalue_id = try vm.functions.createUpvalue(.{
         .open_index = null,
         .closed = Data.new.table(table_id),
-        .next_open = null,
     });
     const closure_id = try vm.functions.createClosure(proto_id, &.{upvalue_id});
     try vm.push(Data.new.function(closure_id));
