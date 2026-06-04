@@ -672,7 +672,6 @@ pub fn compileIf(
     const end_jump = try emit.jump(self, .jump);
     emit.patchJump(self, else_jump);
     self.active_registers = branch_base_registers; // reset before else so both branches start at same depth
-    self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
 
     try state.pushScope(self);
     errdefer state.popScope(self);
@@ -691,7 +690,6 @@ pub fn compileIf(
             try emit.regRelease(self);
     }
     emit.patchJump(self, end_jump);
-    self.slot_allocators.items[self.slot_allocators.items.len - 1] = saved_next_slot;
 }
 
 fn conditionTypeHint(condition: *const Node) ?TypeHint {

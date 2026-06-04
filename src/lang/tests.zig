@@ -512,6 +512,26 @@ test "errs returned at toplevel report proper span" {
     , .Panic, 2, 2, "boom");
 }
 
+test "if-let works" {
+    try t.top_number(
+        \\ let t = {count = 100}
+        \\ 
+        \\ if not let cnt = t.count
+        \\   return :false
+        \\ 
+        \\ expect_eq(cnt, 100)
+        \\ 
+        \\ let acc = 0
+        \\ 
+        \\ for i in 0..cnt do
+        \\   print(cnt)
+        \\   acc += 1
+        \\ end
+        \\ 
+        \\ acc
+    , 100);
+}
+
 test "metamethod __newindex for field assignment" {
     try t.top_number(
         \\ const mt = {__newindex = fn(self, key, value) table.rawset(self, key, 99)}
