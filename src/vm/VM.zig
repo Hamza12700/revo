@@ -1,4 +1,5 @@
 pub const MAX_FRAMES = 256;
+pub const MAX_REGISTERS = 65535;
 pub const ProgramCounter = usize;
 pub const ConstantID = usize;
 
@@ -74,7 +75,8 @@ pub const Fiber = struct {
     pc: ProgramCounter,
     program: []const Instruction,
     debug_info_id: ?DebugInfoID,
-    slots: std.ArrayList(Data),
+    registers: *[MAX_REGISTERS]Data,
+    registers_len: usize = 0,
     frames: std.ArrayList(Frame),
     open_upvalues: std.ArrayList(OpenUpvalueRef),
 
@@ -95,7 +97,7 @@ pub const Fiber = struct {
             .pc = 0,
             .program = program,
             .debug_info_id = null,
-            .slots = try std.ArrayList(Data).initCapacity(alloc, 256),
+            .registers = try alloc.create([MAX_REGISTERS]Data),
             .frames = try std.ArrayList(Frame).initCapacity(alloc, MAX_FRAMES),
             .open_upvalues = try std.ArrayList(OpenUpvalueRef).initCapacity(alloc, 8),
             .running = false,
@@ -109,7 +111,7 @@ pub const Fiber = struct {
     }
 
     pub fn deinit(self: *Fiber, alloc: std.mem.Allocator) void {
-        self.slots.deinit(alloc);
+        alloc.destroy(self.registers);
         self.frames.deinit(alloc);
         self.open_upvalues.deinit(alloc);
         self.waiters.deinit(alloc);
@@ -247,7 +249,7 @@ pub fn init(runtime: revo.Runtime) !VM {
         .pc = 0,
         .program = &.{},
         .debug_info_id = null,
-        .slots = try std.ArrayList(Data).initCapacity(runtime.alloc, 16),
+        .registers = try runtime.alloc.create([MAX_REGISTERS]Data),
         .frames = try std.ArrayList(Frame).initCapacity(runtime.alloc, 4),
         .running = false,
         .open_upvalues = try std.ArrayList(Fiber.OpenUpvalueRef).initCapacity(runtime.alloc, 8),
@@ -408,24 +410,26 @@ pub fn stringValue(self: *VM, id: mem.StringID) []const u8 {
 
 pub fn push(self: *VM, val: Data) !void {
     const fiber = self.currentFiber();
-    try fiber.slots.append(self.runtime.alloc, val);
+    if (fiber.registers_len >= MAX_REGISTERS) return error.OutOfMemory;
+    fiber.registers[fiber.registers_len] = val;
+    fiber.registers_len += 1;
 }
 
 pub fn currentResult(self: *VM) Data {
     const fiber = self.currentFiber();
-    if (fiber.slots.items.len > 0) return fiber.slots.items[fiber.slots.items.len - 1];
+    if (fiber.registers_len > 0) return fiber.registers[fiber.registers_len - 1];
     return fiber.result;
 }
 
 pub inline fn mainResult(self: *VM) Data {
     const fiber = self.mainFiber();
-    if (fiber.slots.items.len > 0) return fiber.slots.items[fiber.slots.items.len - 1];
+    if (fiber.registers_len > 0) return fiber.registers[fiber.registers_len - 1];
     return fiber.result;
 }
 
 pub fn printStack(self: *VM) void {
     std.debug.print("[", .{});
-    for (self.currentFiber().slots.items) |item| {
+    for (self.currentFiber().registers) |item| {
         item.print(self);
         std.debug.print(", ", .{});
     }
@@ -466,10 +470,9 @@ pub inline fn schedNowMonotonicNs(self: *VM) u64 {
 //
 pub fn pop(self: *VM) !Data {
     const fiber = self.currentFiber();
-    if (fiber.slots.items.len == 0) return error.StackUnderflow;
-
-    const ret = fiber.slots.pop() orelse unreachable;
-    return ret;
+    if (fiber.registers_len == 0) return error.StackUnderflow;
+    fiber.registers_len -= 1;
+    return fiber.registers[fiber.registers_len];
 }
 
 fn absoluteRegisterIndex(self: *VM, reg: opcode.Register) !usize {
@@ -478,35 +481,36 @@ fn absoluteRegisterIndex(self: *VM, reg: opcode.Register) !usize {
 }
 
 fn ensureAbsoluteSlot(self: *VM, slot: usize) !void {
-    const slots = &self.currentFiber().slots;
-    if (slot < slots.items.len) return;
-    const old_len = slots.items.len;
-    try slots.resize(self.runtime.alloc, slot + 1);
-    @memset(slots.items[old_len..], revo.core_atoms.data(.missing));
+    const fiber = self.currentFiber();
+    if (slot >= MAX_REGISTERS) return error.OutOfMemory;
+    if (slot < fiber.registers_len) return;
+    const old_len = fiber.registers_len;
+    @memset(fiber.registers[old_len .. slot + 1], revo.core_atoms.data(.missing));
+    fiber.registers_len = slot + 1;
 }
 
 pub fn readRegister(self: *VM, reg: opcode.Register) !Data {
     const slot = try self.absoluteRegisterIndex(reg);
-    if (slot >= self.currentFiber().slots.items.len)
+    if (slot >= self.currentFiber().registers_len)
         return revo.core_atoms.data(.missing);
 
-    return self.currentFiber().slots.items[slot];
+    return self.currentFiber().registers[slot];
 }
 
 pub fn writeRegister(self: *VM, reg: opcode.Register, value: Data) !void {
     const slot = try self.absoluteRegisterIndex(reg);
     try self.ensureAbsoluteSlot(slot);
-    self.currentFiber().slots.items[slot] = value;
+    self.currentFiber().registers[slot] = value;
 }
 
 /// call when 0 <= slot < slots.len
 pub inline fn readRegisterUnsafe(self: *VM, slot: usize) Data {
-    return self.currentFiber().slots.items[slot];
+    return self.currentFiber().registers[slot];
 }
 
 /// call when slot is valid and capacity is enough
 pub inline fn writeRegisterUnsafe(self: *VM, slot: usize, value: Data) void {
-    self.currentFiber().slots.items[slot] = value;
+    self.currentFiber().registers[slot] = value;
 }
 
 /// register read using a cached slots pointer (avoids currentFiber call)
@@ -776,7 +780,7 @@ fn closeUpvalues(self: *VM, from_index: usize) !void {
 
         const upvalue = try self.functions.getUpvalue(entry.id);
         if (upvalue.open_index) |slot_index| {
-            upvalue.closed = self.currentFiber().slots.items[slot_index];
+            upvalue.closed = self.currentFiber().registers[slot_index];
             upvalue.open_index = null;
         }
         _ = open.pop();
@@ -785,14 +789,14 @@ fn closeUpvalues(self: *VM, from_index: usize) !void {
 
 pub inline fn loadUpvalueData(self: *VM, upvalue_id: root.functions.UpvalueID) !Data {
     const upvalue = try self.functions.getUpvalue(upvalue_id);
-    if (upvalue.open_index) |slot_index| return self.currentFiber().slots.items[slot_index];
+    if (upvalue.open_index) |slot_index| return self.currentFiber().registers[slot_index];
     return upvalue.closed;
 }
 
 pub inline fn storeUpvalueData(self: *VM, upvalue_id: root.functions.UpvalueID, value: Data) !void {
     const upvalue = try self.functions.getUpvalue(upvalue_id);
     if (upvalue.open_index) |slot_index| {
-        self.currentFiber().slots.items[slot_index] = value;
+        self.currentFiber().registers[slot_index] = value;
     } else {
         upvalue.closed = value;
     }
@@ -842,7 +846,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     const fiber = self.currentFiber();
     const initial_frame_depth = fiber.frames.items.len;
     const initial_pc = fiber.pc;
-    const initial_slot_len = fiber.slots.items.len;
+    const initial_slot_len = fiber.registers_len;
 
     if (fiber.frames.items.len == 0) {
         if (fiber.debug_info_id == null)
@@ -856,10 +860,10 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
 
     const caller_frame_depth = fiber.frames.items.len;
     const base = (try self.currentFrame()).base;
-    const callee_slot = fiber.slots.items.len;
+    const callee_slot = fiber.registers_len;
 
     errdefer {
-        fiber.slots.items.len = initial_slot_len;
+        fiber.registers_len = initial_slot_len;
         fiber.pc = initial_pc;
         self.closeUpvalues(initial_slot_len) catch {};
         while (fiber.frames.items.len > initial_frame_depth) {
@@ -867,11 +871,19 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
         }
     }
 
-    try fiber.slots.append(self.runtime.alloc, callee);
+    if (fiber.registers_len >= MAX_REGISTERS) return error.StackOverflow;
+    fiber.registers[fiber.registers_len] = callee;
+    fiber.registers_len += 1;
     if (maybe_first) |first| {
-        try fiber.slots.append(self.runtime.alloc, first);
+        if (fiber.registers_len >= MAX_REGISTERS) return error.StackOverflow;
+        fiber.registers[fiber.registers_len] = first;
+        fiber.registers_len += 1;
     }
-    for (args) |arg| try fiber.slots.append(self.runtime.alloc, arg);
+    for (args) |arg| {
+        if (fiber.registers_len >= MAX_REGISTERS) return error.StackOverflow;
+        fiber.registers[fiber.registers_len] = arg;
+        fiber.registers_len += 1;
+    }
 
     const call_reg_usize = callee_slot - base;
     if (call_reg_usize > std.math.maxInt(opcode.Register))
@@ -888,8 +900,8 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
         if (try self.execFiberUntilDepth(caller_frame_depth)) |_| return error.Panic;
     }
 
-    const result = fiber.slots.items[callee_slot];
-    fiber.slots.items.len = callee_slot;
+    const result = fiber.registers[callee_slot];
+    fiber.registers_len = callee_slot;
     return result;
 }
 
@@ -1116,7 +1128,7 @@ fn callNonClosureFunction(
             const args_start = callee_slot + 1;
             const args_end = args_start + argc;
             try self.ensureAbsoluteSlot(args_end);
-            const args = fiber.slots.items[args_start..args_end];
+            const args = fiber.registers[args_start..args_end];
 
             var c_args = try self.runtime.alloc.alloc(
                 revo.ffi.CRevoData,
@@ -1165,7 +1177,7 @@ fn callNonClosureFunction(
             const args_start = callee_slot + 1;
             const args_end = args_start + argc;
             try self.ensureAbsoluteSlot(args_end);
-            const args = fiber.slots.items[args_start..args_end];
+            const args = fiber.registers[args_start..args_end];
 
             if ((!f.variadic and argc != f.arity) or
                 (f.variadic and argc < f.arity))
@@ -1308,8 +1320,8 @@ pub fn callRegister(
     const callee_slot = base + instr.a;
     const argc: usize = instr.b;
 
-    const callee = if (callee_slot < fiber.slots.items.len)
-        fiber.slots.items[callee_slot]
+    const callee = if (callee_slot < fiber.registers_len)
+        fiber.registers[callee_slot]
     else
         revo.core_atoms.data(.missing);
 
@@ -1356,8 +1368,8 @@ pub fn callRegister(
                         if (callee_slot != caller_fn_slot) {
                             std.mem.copyForwards(
                                 Data,
-                                fiber.slots.items[caller_fn_slot .. caller_fn_slot + moved_len],
-                                fiber.slots.items[callee_slot .. callee_slot + moved_len],
+                                fiber.registers[caller_fn_slot .. caller_fn_slot + moved_len],
+                                fiber.registers[callee_slot .. callee_slot + moved_len],
                             );
                         }
 
@@ -1366,19 +1378,15 @@ pub fn callRegister(
                         tail_frame.closure_id = closure_id;
                         tail_frame.register_count = closure.register_count;
 
-                        if (tail_frame.base +
-                            closure.register_count >
-                            fiber.slots.items.len)
-                        {
-                            try fiber.slots.resize(
-                                self.runtime.alloc,
-                                tail_frame.base +
-                                    closure.register_count,
-                            );
+                        const tail_needed = tail_frame.base +
+                            closure.register_count;
+                        if (tail_needed > fiber.registers_len) {
+                            if (tail_needed > MAX_REGISTERS) return error.StackOverflow;
+                            fiber.registers_len = tail_needed;
                         }
                         if (argc < closure.register_count) {
                             @memset(
-                                fiber.slots.items[tail_frame.base + argc .. tail_frame.base + closure.register_count],
+                                fiber.registers[tail_frame.base + argc .. tail_frame.base + closure.register_count],
                                 revo.core_atoms.data(.missing),
                             );
                         }
@@ -1389,17 +1397,14 @@ pub fn callRegister(
                 }
 
                 const new_base = callee_slot + 1;
-                if (new_base + closure.register_count >
-                    fiber.slots.items.len)
-                {
-                    try fiber.slots.resize(
-                        self.runtime.alloc,
-                        new_base + closure.register_count,
-                    );
+                const call_needed = new_base + closure.register_count;
+                if (call_needed > fiber.registers_len) {
+                    if (call_needed > MAX_REGISTERS) return error.StackOverflow;
+                    fiber.registers_len = call_needed;
                 }
                 if (argc < closure.register_count) {
                     @memset(
-                        fiber.slots.items[new_base + argc .. new_base + closure.register_count],
+                        fiber.registers[new_base + argc .. new_base + closure.register_count],
                         revo.core_atoms.data(.missing),
                     );
                 }
@@ -1438,7 +1443,7 @@ pub fn callRegister(
             const args_start = callee_slot + 1;
             const args_end = args_start + argc;
             try self.ensureAbsoluteSlot(args_end);
-            const args = fiber.slots.items[args_start..args_end];
+            const args = fiber.registers[args_start..args_end];
             const result = try self.callFunctionParts(
                 mm,
                 callee,
@@ -1526,7 +1531,7 @@ fn callStructConstructor(
     }
 
     if (argc == 1) {
-        const init_data = fiber.slots.items[callee_slot + 1];
+        const init_data = fiber.registers[callee_slot + 1];
         const init_id = init_data.asTable() orelse {
             try self.setRuntimeMessageFmt(
                 "struct `{s}` expects an init table, got {s}",
@@ -1680,7 +1685,7 @@ pub fn returnRegister(
 ) EvalError!void {
     const fiber = self.currentFiber();
     const result = regRead(
-        fiber.slots.items,
+        fiber.registers,
         fiber.frames.items[
             fiber.frames.items.len - 1
         ].base,
@@ -1736,7 +1741,7 @@ pub fn returnRegister(
         const finished_id = self.sched.current_fiber;
         try self.sched.finishFiber(finished_id, result);
         if (finished_id == 0) {
-            fiber.slots.items.len = 0;
+            fiber.registers_len = 0;
             try self.push(result);
         }
         return;
@@ -1747,8 +1752,8 @@ pub fn returnRegister(
         frame.result_register;
     const parent_end = parent.base +
         parent.register_count;
-    fiber.slots.items.len = @max(result_slot + 1, parent_end);
-    fiber.slots.items[result_slot] = result;
+    fiber.registers_len = @max(result_slot + 1, parent_end);
+    fiber.registers[result_slot] = result;
 }
 
 pub inline fn spawnRegister(
@@ -1758,7 +1763,7 @@ pub inline fn spawnRegister(
 ) EvalError!void {
     const argc: usize = instr.b;
     const fiber = self.currentFiber();
-    const callee = regRead(fiber.slots.items, base, instr.a);
+    const callee = regRead(fiber.registers, base, instr.a);
     const closure_id = callee.asFunction() orelse {
         try self.setRuntimeMessage("spawn expects function!");
         return error.NotAFunction;
@@ -1790,16 +1795,16 @@ pub inline fn spawnRegister(
     child.debug_info_id = fiber.debug_info_id;
     child.state = .ready;
 
-    try child.slots.resize(self.runtime.alloc, closure.register_count);
-    @memset(child.slots.items, revo.core_atoms.data(.missing));
+    if (closure.register_count > MAX_REGISTERS) return error.StackOverflow;
+    child.registers_len = closure.register_count;
+    @memset(child.registers[0..closure.register_count], revo.core_atoms.data(.missing));
 
-    const fiber_slots = fiber.slots.items;
     for (0..argc) |idx| {
         // this is safe
         const src_reg = instr.a + 1 + @as(opcode.Register, @intCast(idx));
         const src_slot = base + src_reg;
-        child.slots.items[idx] = if (src_slot < fiber_slots.len)
-            fiber_slots[src_slot]
+        child.registers[idx] = if (src_slot < fiber.registers_len)
+            fiber.registers[src_slot]
         else
             revo.core_atoms.data(.missing);
     }
@@ -1819,10 +1824,11 @@ pub inline fn spawnRegister(
     try self.sched.fibers.append(self.runtime.alloc, child);
     try self.sched.enqueueRunnable(child_id);
     const result_slot = base + instr.c;
-    if (result_slot >= fiber_slots.len) {
-        try fiber.slots.resize(self.runtime.alloc, result_slot + 1);
+    if (result_slot >= fiber.registers_len) {
+        if (result_slot >= MAX_REGISTERS) return error.StackOverflow;
+        fiber.registers_len = result_slot + 1;
     }
-    fiber.slots.items[result_slot] = Data.new.num(@as(i64, @intCast(child_id)));
+    fiber.registers[result_slot] = Data.new.num(@as(i64, @intCast(child_id)));
 }
 // gc
 pub fn markData(self: *VM, data: Data) void {

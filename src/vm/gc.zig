@@ -220,7 +220,7 @@ pub fn processMarkStack(self: *VM) void {
 
 pub inline fn markRoots(self: *VM) void {
     for (self.sched.fibers.items) |fiber| {
-        for (fiber.slots.items) |data|
+        for (fiber.registers[0..fiber.registers_len]) |data|
             pushMark(self, data);
         for (fiber.frames.items) |frame| {
             if (frame.closure_id) |id|

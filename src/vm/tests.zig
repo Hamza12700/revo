@@ -131,7 +131,7 @@ test "vm channel handoff wakes blocked receiver" {
     try vm.sched.channelSend(ch, Data.new.num(99));
 
     try testing.expectEqual(@as(VM.Fiber.State, .ready), vm.sched.fibers.items[1].state);
-    try testing.expectEqual(@as(f64, 99), vm.sched.fibers.items[1].slots.items[0].asNum().?);
+    try testing.expectEqual(@as(f64, 99), vm.sched.fibers.items[1].registers[0].asNum().?);
 }
 
 test "scheduler generic park wake resumes parked fiber" {
@@ -140,8 +140,8 @@ test "scheduler generic park wake resumes parked fiber" {
 
     const child = try VM.Fiber.init(vm.runtime.alloc, 1, &.{});
     try vm.sched.fibers.append(vm.runtime.alloc, child);
-    try vm.sched.fibers.items[1].slots.resize(vm.runtime.alloc, 1);
-    vm.sched.fibers.items[1].slots.items[0] = revo.core_atoms.data(.missing);
+    vm.sched.fibers.items[1].registers_len = 1;
+    vm.sched.fibers.items[1].registers[0] = revo.core_atoms.data(.missing);
 
     vm.sched.current_fiber = 1;
     try vm.sched.parkCurrentForIo(
@@ -165,7 +165,7 @@ test "scheduler generic park wake resumes parked fiber" {
     try vm.sched.wakeFiber(1, Data.new.num(13));
 
     try testing.expectEqual(@as(VM.Fiber.State, .ready), vm.sched.fibers.items[1].state);
-    try testing.expectEqual(@as(f64, 13), vm.sched.fibers.items[1].slots.items[1].asNum().?);
+    try testing.expectEqual(@as(f64, 13), vm.sched.fibers.items[1].registers[1].asNum().?);
 }
 
 test "vm channel buffered send then recv" {
@@ -175,12 +175,12 @@ test "vm channel buffered send then recv" {
     const ch = try vm.sched.channelCreate(&vm.tables, 1);
     try vm.sched.channelSend(ch, Data.new.num(7));
 
-    const before = vm.currentFiber().slots.items.len;
+    const before = vm.currentFiber().registers_len;
     if (try vm.sched.channelRecv(ch)) |value| {
         try vm.push(value);
     }
-    try testing.expectEqual(before + 1, vm.currentFiber().slots.items.len);
-    try testing.expectEqual(@as(f64, 7), vm.currentFiber().slots.items[vm.currentFiber().slots.items.len - 1].asNum().?);
+    try testing.expectEqual(before + 1, vm.currentFiber().registers_len);
+    try testing.expectEqual(@as(f64, 7), vm.currentFiber().registers[vm.currentFiber().registers_len - 1].asNum().?);
 }
 
 test "vm gc reuses freed table ids" {

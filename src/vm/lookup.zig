@@ -132,13 +132,13 @@ pub fn resolveIndex(self: *VM, object: Data, key: Data, indexer: Data) VM.EvalEr
 
 pub fn callField(self: *VM, argc: usize) VM.EvalError!void {
     const fiber = self.currentFiber();
-    const slots = fiber.slots.items;
+    const slots = fiber.registers[0..fiber.registers_len];
     const key_slot = slots.len - argc - 1;
     const object_slot = key_slot - 1;
     const object = slots[object_slot];
     const key = slots[key_slot];
     const lookup = (try resolveField(self, object, key)) orelse {
-        fiber.slots.items.len = object_slot;
+        fiber.registers_len = object_slot;
         const key_name = if (key.asAtom()) |atom| self.atomName(atom) else revo.std_lib.dataToString(key);
         try self.setRuntimeMessageFmt("field `{s}` does not exist on {s}", .{
             key_name,
@@ -148,19 +148,19 @@ pub fn callField(self: *VM, argc: usize) VM.EvalError!void {
     };
 
     if (!lookup.from_meta) {
-        fiber.slots.items[key_slot] = lookup.value;
+        fiber.registers[key_slot] = lookup.value;
         std.mem.copyForwards(
             Data,
-            fiber.slots.items[object_slot .. fiber.slots.items.len - 1],
-            fiber.slots.items[key_slot..fiber.slots.items.len],
+            fiber.registers[object_slot .. fiber.registers_len - 1],
+            fiber.registers[key_slot..fiber.registers_len],
         );
-        fiber.slots.items.len -= 1;
+        fiber.registers_len -= 1;
         try callViaStackLayout(self, object_slot, argc);
         return;
     }
 
-    fiber.slots.items[object_slot] = lookup.value;
-    fiber.slots.items[key_slot] = object;
+    fiber.registers[object_slot] = lookup.value;
+    fiber.registers[key_slot] = object;
     try callViaStackLayout(self, object_slot, argc + 1);
 }
 
@@ -168,11 +168,13 @@ fn callViaStackLayout(self: *VM, callee_slot: usize, argc: usize) VM.EvalError!v
     const fiber = self.currentFiber();
     const args_start = callee_slot + 1;
     const args_end = args_start + argc;
-    const callee = fiber.slots.items[callee_slot];
-    try fiber.slots.ensureTotalCapacity(self.runtime.alloc, fiber.slots.items.len + argc + 1);
-    const result = try self.callFunction(callee, fiber.slots.items[args_start..args_end]);
-    fiber.slots.items.len = callee_slot;
-    try fiber.slots.append(self.runtime.alloc, result);
+    const callee = fiber.registers[callee_slot];
+    if (fiber.registers_len + argc + 1 > VM.MAX_REGISTERS) return error.StackOverflow;
+    const result = try self.callFunction(callee, fiber.registers[args_start..args_end]);
+    fiber.registers_len = callee_slot;
+    if (fiber.registers_len >= VM.MAX_REGISTERS) return error.StackOverflow;
+    fiber.registers[fiber.registers_len] = result;
+    fiber.registers_len += 1;
 }
 
 pub fn setMetatable(self: *VM, val: Data, mt: ?mem.TableID) !void {

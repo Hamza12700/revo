@@ -653,7 +653,7 @@ pub fn debug_(args: []const Data, vm: *VM) !NativeResult {
     const fiber = vm.currentFiber();
     try out.putRaw(Data.new.atom(try vm.internAtom("fiber_id")), Data.new.num(fiber.id));
     try out.putRaw(Data.new.atom(try vm.internAtom("pc")), Data.new.num(fiber.pc));
-    try out.putRaw(Data.new.atom(try vm.internAtom("stack_depth")), Data.new.num(fiber.slots.items.len));
+    try out.putRaw(Data.new.atom(try vm.internAtom("stack_depth")), Data.new.num(fiber.registers_len));
     try out.putRaw(Data.new.atom(try vm.internAtom("frame_depth")), Data.new.num(fiber.frames.items.len));
     try out.putRaw(Data.new.atom(try vm.internAtom("program_len")), Data.new.num(fiber.program.len));
 
