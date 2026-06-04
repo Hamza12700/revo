@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const revo = @import("revo");
+const builtin = @import("builtin");
 
 pub const StringID = usize;
 pub const AtomID = usize;
@@ -80,8 +81,10 @@ pub const Data = struct {
     }
 
     // pack type+payload into nanbox. debug-assert payload fits PAYLOAD_MASK
-    fn boxed(t: Type, val: usize) Data {
-        if (val != std.math.maxInt(usize)) std.debug.assert(val <= PAYLOAD_MASK);
+    inline fn boxed(t: Type, val: usize) Data {
+        if (comptime builtin.mode == .Debug)
+            if (val != std.math.maxInt(usize)) std.debug.assert(val <= PAYLOAD_MASK);
+
         const pl = @as(u64, @intCast(val)) & PAYLOAD_MASK;
         return .{ .bits = BOX_MASK | (@as(u64, @intFromEnum(t)) << TAG_SHIFT) | pl };
     }
