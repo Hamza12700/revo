@@ -135,12 +135,13 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
     fiber.pc += 1;
 
     var base = fiber.frames.items[fiber.frames.items.len - 1].base;
+    var regs = fiber.registers[0..fiber.registers_len];
 
     dispatch: switch (instr.op) {
         .move => {
-            const val = regRead(fiber.registers[0..fiber.registers_len], base, instr.b);
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, val);
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            const val = regRead(regs, base, instr.b);
+            regWrite(regs, base, instr.a, val);
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -148,16 +149,16 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .load_const => {
             std.debug.assert(instr.bx < self.constants.items.len);
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, self.constants.items[instr.bx]);
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            regWrite(regs, base, instr.a, self.constants.items[instr.bx]);
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .load_nil => {
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, revo.core_atoms.data(.nil));
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            regWrite(regs, base, instr.a, revo.core_atoms.data(.nil));
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -165,26 +166,24 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .load_small_int => {
             regWrite(
-                fiber.registers[0..fiber.registers_len],
+                regs,
                 base,
                 instr.a,
                 Data.new.num(@as(i64, @intCast(instr.bx))),
             );
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .add => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
 
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                regWrite(slots, base, instr.a, Data.new.num(ln + rn));
+                regWrite(regs, base, instr.a, Data.new.num(ln + rn));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -198,9 +197,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 const result_str = try self.adoptDataStringNoDedup(
                     try std.mem.concat(alloc, u8, &.{ l_str, r_str }),
                 );
-                regWrite(slots, base, instr.a, result_str);
+                regWrite(regs, base, instr.a, result_str);
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -211,13 +209,11 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             return self.evalFailure(error.IncompatibleTypes);
         },
         .sub => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
-                regWrite(slots, base, instr.a, Data.new.num(ln - rn));
+                regWrite(regs, base, instr.a, Data.new.num(ln - rn));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -227,13 +223,12 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             return self.evalFailure(error.IncompatibleTypes);
         },
         .mul => {
-            const slots = fiber.registers[0..fiber.registers_len];
+            const slots = regs;
             const lhs = regRead(slots, base, instr.b);
             const rhs = regRead(slots, base, instr.c);
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
                 regWrite(slots, base, instr.a, Data.new.num(ln * rn));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -260,7 +255,6 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     @memcpy(result[i * str.len ..][0..str.len], str);
                 regWrite(slots, base, instr.a, try self.adoptDataStringNoDedup(result));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -270,14 +264,12 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             return self.evalFailure(error.IncompatibleTypes);
         },
         .div => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
                 if (rn == 0) return self.evalFailure(error.DivisionByZero);
-                regWrite(slots, base, instr.a, Data.new.num(ln / rn));
+                regWrite(regs, base, instr.a, Data.new.num(ln / rn));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -287,14 +279,12 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             return self.evalFailure(error.IncompatibleTypes);
         },
         .mod => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
                 if (rn == 0) return self.evalFailure(error.DivisionByZero);
-                regWrite(slots, base, instr.a, Data.new.num(@mod(ln, rn)));
+                regWrite(regs, base, instr.a, Data.new.num(@mod(ln, rn)));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -304,9 +294,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             return self.evalFailure(error.IncompatibleTypes);
         },
         .mod_int => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (debug_assert_types) {
                 std.debug.assert(lhs.isNumber());
                 std.debug.assert(rhs.isNumber());
@@ -314,21 +303,18 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const li = @as(i64, @intFromFloat(@as(f64, @bitCast(lhs.bits))));
             const ri = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs.bits))));
             if (ri == 0) return self.evalFailure(error.DivisionByZero);
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @floatFromInt(@mod(li, ri)))));
+            regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(@mod(li, ri)))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .negate => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const v = regRead(slots, base, instr.b);
+            const v = regRead(regs, base, instr.b);
             if (v.asNum()) |n| {
-                regWrite(slots, base, instr.a, Data.new.num(-n));
+                regWrite(regs, base, instr.a, Data.new.num(-n));
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -338,120 +324,104 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             return self.evalFailure(error.IncompatibleTypes);
         },
         .negate_int => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const v = regRead(slots, base, instr.b);
+            const v = regRead(regs, base, instr.b);
             if (debug_assert_types) std.debug.assert(v.isNumber());
             const v_int = @as(i64, @intFromFloat(@as(f64, @bitCast(v.bits))));
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @floatFromInt(-v_int))));
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(-v_int))));
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .negate_float => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const v = regRead(slots, base, instr.b);
+            const v = regRead(regs, base, instr.b);
             if (debug_assert_types) std.debug.assert(v.isNumber());
-            regWrite(slots, base, instr.a, Data.new.num(-@as(f64, @bitCast(v.bits))));
+            regWrite(regs, base, instr.a, Data.new.num(-@as(f64, @bitCast(v.bits))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .add_int => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) + @as(f64, @bitCast(rhs.bits))));
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
+            regWrite(regs, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) + @as(f64, @bitCast(rhs.bits))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .sub_int => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) - @as(f64, @bitCast(rhs.bits))));
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
+            regWrite(regs, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) - @as(f64, @bitCast(rhs.bits))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .mul_int => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (debug_assert_types) {
                 std.debug.assert(lhs.isNumber());
                 std.debug.assert(rhs.isNumber());
             }
             const li = @as(i64, @intFromFloat(@as(f64, @bitCast(lhs.bits))));
             const ri = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs.bits))));
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @floatFromInt(li * ri))));
+            regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(li * ri))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .div_int => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (debug_assert_types) {
                 std.debug.assert(lhs.isNumber());
                 std.debug.assert(rhs.isNumber());
             }
             const rv = @as(f64, @bitCast(rhs.bits));
             if (rv == 0) return self.evalFailure(error.DivisionByZero);
-            regWrite(slots, base, instr.a, Data.new.num(@divTrunc(@as(i64, @intFromFloat(@as(f64, @bitCast(lhs.bits)))), @as(i64, @intFromFloat(rv)))));
+            regWrite(regs, base, instr.a, Data.new.num(@divTrunc(@as(i64, @intFromFloat(@as(f64, @bitCast(lhs.bits)))), @as(i64, @intFromFloat(rv)))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .div_float => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs = regRead(slots, base, instr.b);
-            const rhs = regRead(slots, base, instr.c);
+            const lhs = regRead(regs, base, instr.b);
+            const rhs = regRead(regs, base, instr.c);
             if (debug_assert_types) {
                 std.debug.assert(lhs.isNumber());
                 std.debug.assert(rhs.isNumber());
             }
             if (@as(f64, @bitCast(rhs.bits)) == 0) return self.evalFailure(error.DivisionByZero);
-            regWrite(slots, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) / @as(f64, @bitCast(rhs.bits))));
+            regWrite(regs, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) / @as(f64, @bitCast(rhs.bits))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         inline .eq, .neq, .lt, .gt, .lte, .gte => |op| {
-            const slots = fiber.registers[0..fiber.registers_len];
-            try compare_impl.evalCachedFast(slots, base, self, instr, op);
+            try compare_impl.evalCachedFast(regs, base, self, instr, op);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         inline .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => |op| {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const lhs_val = regRead(slots, base, instr.b);
-            const rhs_val = regRead(slots, base, instr.c);
+            const lhs_val = regRead(regs, base, instr.b);
+            const rhs_val = regRead(regs, base, instr.c);
             const lhs = @as(i64, @intFromFloat(@as(f64, @bitCast(lhs_val.bits))));
             const rhs = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs_val.bits))));
 
@@ -464,45 +434,38 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 .gte_int => lhs >= rhs,
                 else => unreachable,
             };
-            regWrite(slots, base, instr.a, Data.new.boolean(result));
+            regWrite(regs, base, instr.a, Data.new.boolean(result));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .@"and" => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            regWrite(slots, base, instr.a, Data.new.boolean(
-                !revo.isFalse(regRead(slots, base, instr.b)) and
-                    !revo.isFalse(regRead(slots, base, instr.c)),
+            regWrite(regs, base, instr.a, Data.new.boolean(
+                !revo.isFalse(regRead(regs, base, instr.b)) and
+                    !revo.isFalse(regRead(regs, base, instr.c)),
             ));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .@"or" => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            regWrite(slots, base, instr.a, Data.new.boolean(
-                !revo.isFalse(regRead(slots, base, instr.b)) or
-                    !revo.isFalse(regRead(slots, base, instr.c)),
+            regWrite(regs, base, instr.a, Data.new.boolean(
+                !revo.isFalse(regRead(regs, base, instr.b)) or
+                    !revo.isFalse(regRead(regs, base, instr.c)),
             ));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .not => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            regWrite(slots, base, instr.a, Data.new.boolean(revo.isFalse(regRead(slots, base, instr.b))));
+            regWrite(regs, base, instr.a, Data.new.boolean(revo.isFalse(regRead(regs, base, instr.b))));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -510,21 +473,18 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .table_new => {
             self.noteGCPressure(@sizeOf(revo.table.Table) + 64);
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, Data.new.table(try self.tables.create()));
+            regWrite(regs, base, instr.a, Data.new.table(try self.tables.create()));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .table_set => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const table_value = regRead(slots, base, instr.a);
-            const key = regRead(slots, base, instr.b);
+            const table_value = regRead(regs, base, instr.a);
+            const key = regRead(regs, base, instr.b);
             if (key.asAtom()) |atom| {
-                if (try self.setStructField(table_value, atom, regRead(slots, base, instr.c))) {
-                    if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+                if (try self.setStructField(table_value, atom, regRead(regs, base, instr.c))) {
                     if (fiber.pc >= fiber.program.len) break :dispatch;
                     instr = fiber.program[fiber.pc];
                     fiber.pc += 1;
@@ -533,24 +493,21 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             const t_id = table_value.asTable() orelse return self.evalFailure(error.TypeError);
             const t = try self.tableFast(t_id);
-            try t.put(t_id, self, key, regRead(slots, base, instr.c));
+            try t.put(t_id, self, key, regRead(regs, base, instr.c));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .table_get => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const object = regRead(slots, base, instr.b);
-            const key = regRead(slots, base, instr.c);
+            const object = regRead(regs, base, instr.b);
+            const key = regRead(regs, base, instr.c);
             if (object.asTable()) |t_id| {
                 const t = try self.tableFast(t_id);
                 if (t.getRaw(key)) |value| {
-                    regWrite(slots, base, instr.a, value);
+                    regWrite(regs, base, instr.a, value);
 
-                    if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                     if (fiber.pc >= fiber.program.len) break :dispatch;
                     instr = fiber.program[fiber.pc];
                     fiber.pc += 1;
@@ -558,20 +515,17 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 }
             }
             if (try self.resolveField(object, key)) |resolved| {
-                regWrite(slots, base, instr.a, resolved.value);
-            } else regWrite(slots, base, instr.a, revo.core_atoms.data(.undef));
+                regWrite(regs, base, instr.a, resolved.value);
+            } else regWrite(regs, base, instr.a, revo.core_atoms.data(.undef));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .table_set_atom => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const table_value = regRead(slots, base, instr.a);
-            if (try self.setStructField(table_value, instr.bx, regRead(slots, base, instr.c))) {
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            const table_value = regRead(regs, base, instr.a);
+            if (try self.setStructField(table_value, instr.bx, regRead(regs, base, instr.c))) {
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -580,17 +534,15 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const t_id = table_value.asTable() orelse return self.evalFailure(error.TypeError);
             const t = try self.tableFast(t_id);
             const key = Data.new.atom(instr.bx);
-            try t.put(t_id, self, key, regRead(slots, base, instr.c));
+            try t.put(t_id, self, key, regRead(regs, base, instr.c));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .table_get_atom => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const object = regRead(slots, base, instr.b);
+            const object = regRead(regs, base, instr.b);
             const key = Data.new.atom(instr.bx);
 
             if (object.asTable()) |t_id| {
@@ -600,44 +552,41 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
                 if (ic.pc == pc and ic.table_id == t_id and ic.version == t.ic_version) {
                     @branchHint(.likely);
-                    regWrite(slots, base, instr.a, ic.value);
+                    regWrite(regs, base, instr.a, ic.value);
                 } else if (t.getRaw(key)) |value| {
                     ic.* = .{ .pc = pc, .table_id = t_id, .version = t.ic_version, .value = value };
-                    regWrite(slots, base, instr.a, value);
+                    regWrite(regs, base, instr.a, value);
                 } else if (try self.resolveField(object, key)) |resolved| {
                     ic.* = .{ .pc = pc, .table_id = t_id, .version = t.ic_version, .value = resolved.value };
-                    regWrite(slots, base, instr.a, resolved.value);
+                    regWrite(regs, base, instr.a, resolved.value);
                 } else {
-                    regWrite(slots, base, instr.a, revo.core_atoms.data(.undef));
+                    regWrite(regs, base, instr.a, revo.core_atoms.data(.undef));
                 }
             } else if (try self.resolveField(object, key)) |resolved| {
-                regWrite(slots, base, instr.a, resolved.value);
+                regWrite(regs, base, instr.a, resolved.value);
             } else {
-                regWrite(slots, base, instr.a, revo.core_atoms.data(.undef));
+                regWrite(regs, base, instr.a, revo.core_atoms.data(.undef));
             }
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .tuple_new => {
-            const slots = fiber.registers[0..fiber.registers_len];
             const start = base + instr.b;
             const count: usize = instr.bx;
             self.noteGCPressure(@sizeOf(revo.tuple.Tuple) + @sizeOf(Data) * count);
-            regWrite(slots, base, instr.a, Data.new.tuple(try self.tuples.create(slots[start .. start + count])));
+            regWrite(regs, base, instr.a, Data.new.tuple(try self.tuples.create(regs[start .. start + count])));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .tuple_get => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const tuple_id = (regRead(slots, base, instr.b)).asTuple() orelse return self.evalFailure(error.TypeError);
-            const idx_val = regRead(slots, base, instr.c);
+            const tuple_id = (regRead(regs, base, instr.b)).asTuple() orelse return self.evalFailure(error.TypeError);
+            const idx_val = regRead(regs, base, instr.c);
             const idx_num = idx_val.asNum() orelse return self.evalFailure(error.TypeError);
             if (idx_num < 0 or @floor(idx_num) != idx_num) return self.evalFailure(error.TypeError);
             if (idx_num > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return self.evalFailure(error.TypeError);
@@ -647,32 +596,28 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 try self.setRuntimeMessageFmt("tuple index {d} out of range for tuple of length {d}", .{ idx, t.items.len });
                 return self.evalFailure(error.InvalidTuple);
             }
-            regWrite(slots, base, instr.a, t.items[idx]);
+            regWrite(regs, base, instr.a, t.items[idx]);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .tuple_get_const => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const tuple_id = (regRead(slots, base, instr.b)).asTuple() orelse return self.evalFailure(error.TypeError);
+            const tuple_id = (regRead(regs, base, instr.b)).asTuple() orelse return self.evalFailure(error.TypeError);
             const t = try self.tuples.get(tuple_id);
             if (instr.bx >= t.items.len) {
                 try self.setRuntimeMessageFmt("tuple index {d} out of range for tuple of length {d}", .{ instr.bx, t.items.len });
                 return self.evalFailure(error.InvalidTuple);
             }
-            regWrite(slots, base, instr.a, t.items[instr.bx]);
+            regWrite(regs, base, instr.a, t.items[instr.bx]);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .struct_new => {
-            const slots = fiber.registers[0..fiber.registers_len];
             const type_id: revo.StructTypeID = instr.bx;
             const desc = self.struct_types.getType(type_id) orelse {
                 try self.setRuntimeMessage("invalid struct type");
@@ -683,53 +628,46 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             for (desc.fields, 0..) |f, i| {
                 if (f.default_val) |dv| instance.fields[i] = dv;
             }
-            regWrite(slots, base, instr.a, Data.new.structVal(instance_id));
+            regWrite(regs, base, instr.a, Data.new.structVal(instance_id));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .struct_set_method => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const type_val = regRead(slots, base, instr.a);
+            const type_val = regRead(regs, base, instr.a);
             const type_id = type_val.asStructType() orelse return self.evalFailure(error.TypeError);
-            const name_atom_data = regRead(slots, base, instr.b);
+            const name_atom_data = regRead(regs, base, instr.b);
             const name_atom = name_atom_data.asAtom() orelse return self.evalFailure(error.TypeError);
-            const method = regRead(slots, base, instr.c);
+            const method = regRead(regs, base, instr.c);
             const desc = self.struct_types.getType(type_id) orelse return self.evalFailure(error.TypeError);
             try desc.methods.put(self.atomName(name_atom), method);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .struct_get_offset => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const object = regRead(slots, base, instr.b);
+            const object = regRead(regs, base, instr.b);
             const instance_id = object.asStructVal() orelse return self.evalFailure(error.TypeError);
             const instance = self.structGetInstance(instance_id) catch return self.evalFailure(error.Panic);
-            regWrite(slots, base, instr.a, instance.get(instr.bx));
+            regWrite(regs, base, instr.a, instance.get(instr.bx));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .struct_set_offset => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const object = regRead(slots, base, instr.a);
+            const object = regRead(regs, base, instr.a);
             const instance_id = object.asStructVal() orelse return self.evalFailure(error.TypeError);
             const instance = self.structGetInstance(instance_id) catch return self.evalFailure(error.Panic);
-            const value = regRead(slots, base, instr.c);
+            const value = regRead(regs, base, instr.c);
             instance.set(instr.bx, value);
-            regWrite(slots, base, instr.a, Data.new.structVal(instance_id));
+            regWrite(regs, base, instr.a, Data.new.structVal(instance_id));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -738,7 +676,6 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         .jump => {
             fiber.pc = instr.bx;
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -747,9 +684,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         .jump_if_false => {
             @branchHint(.unlikely);
 
-            if (revo.isFalse(regRead(fiber.registers[0..fiber.registers_len], base, instr.a))) fiber.pc = instr.bx;
+            if (revo.isFalse(regRead(regs, base, instr.a))) fiber.pc = instr.bx;
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -758,9 +694,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         .jump_if_true => {
             @branchHint(.unlikely);
 
-            if (!revo.isFalse(regRead(fiber.registers[0..fiber.registers_len], base, instr.a))) fiber.pc = instr.bx;
+            if (!revo.isFalse(regRead(regs, base, instr.a))) fiber.pc = instr.bx;
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -771,9 +706,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 try self.setRuntimeMessageFmt("undefined variable `{s}`", .{self.atomName(instr.bx)});
                 return self.evalFailure(error.UndefinedVariable);
             };
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, value);
+            regWrite(regs, base, instr.a, value);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -784,9 +718,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 try self.setRuntimeMessageFmt("undefined stdlib variable `{s}`", .{self.atomName(instr.bx)});
                 return self.evalFailure(error.UndefinedVariable);
             };
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, value);
+            regWrite(regs, base, instr.a, value);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -797,9 +730,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 try self.setRuntimeMessage("reassignment to constant!");
                 return self.evalFailure(error.ConstantReassignment);
             }
-            try self.globals.put(instr.bx, regRead(fiber.registers[0..fiber.registers_len], base, instr.a));
+            try self.globals.put(instr.bx, regRead(regs, base, instr.a));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -810,33 +742,29 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 try self.setRuntimeMessage("reassignment to constant!");
                 return self.evalFailure(error.ConstantReassignment);
             }
-            try self.globals.put(instr.bx, regRead(fiber.registers[0..fiber.registers_len], base, instr.a));
+            try self.globals.put(instr.bx, regRead(regs, base, instr.a));
             try self.const_globals.put(instr.bx, {});
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .load_local, .bind_local => {
-            const slots = fiber.registers[0..fiber.registers_len];
             const dst = base + instr.a;
             const src = base + instr.b;
-            if (builtin.mode != .ReleaseFast and src >= slots.len) {
-                regWrite(slots, base, instr.a, revo.core_atoms.data(.missing));
+            if (builtin.mode != .ReleaseFast and src >= regs.len) {
+                regWrite(regs, base, instr.a, revo.core_atoms.data(.missing));
             } else {
-                slots[dst] = slots[src];
+                regs[dst] = regs[src];
             }
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .store_local => {
-            const slots = fiber.registers[0..fiber.registers_len];
             if (try self.currentClosure()) |closure| blk: {
                 const proto = try self.functions.getPrototype(closure.prototype);
                 const idx = instr.a / 8;
@@ -846,13 +774,12 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             const dst = base + instr.a;
             const src = base + instr.b;
-            if (builtin.mode != .ReleaseFast and src >= slots.len) {
-                regWrite(slots, base, instr.a, revo.core_atoms.data(.missing));
+            if (builtin.mode != .ReleaseFast and src >= regs.len) {
+                regWrite(regs, base, instr.a, revo.core_atoms.data(.missing));
             } else {
-                slots[dst] = slots[src];
+                regs[dst] = regs[src];
             }
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -873,9 +800,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     try upvalues.append(alloc, closure2.upvalues[spec.index]);
                 }
             }
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, Data.new.function(try self.functions.createClosure(instr.bx, upvalues.items)));
+            regWrite(regs, base, instr.a, Data.new.function(try self.functions.createClosure(instr.bx, upvalues.items)));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -883,9 +809,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .load_upval => {
             const closure2 = (try self.currentClosure()) orelse return self.evalFailure(error.InvalidLocal);
-            regWrite(fiber.registers[0..fiber.registers_len], base, instr.a, try self.loadUpvalueData(closure2.upvalues[instr.bx]));
+            regWrite(regs, base, instr.a, try self.loadUpvalueData(closure2.upvalues[instr.bx]));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -893,9 +818,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .store_upval => {
             const closure2 = (try self.currentClosure()) orelse return self.evalFailure(error.InvalidLocal);
-            try self.storeUpvalueData(closure2.upvalues[instr.bx], regRead(fiber.registers[0..fiber.registers_len], base, instr.a));
+            try self.storeUpvalueData(closure2.upvalues[instr.bx], regRead(regs, base, instr.a));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
@@ -907,6 +831,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 else => return self.evalFailure(e),
             };
             base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            regs = fiber.registers[0..fiber.registers_len];
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
@@ -915,11 +840,10 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             continue :dispatch instr.op;
         },
         .call_field => {
-            const slots = fiber.registers[0..fiber.registers_len];
             const colon = (instr.b & @as(opcode.Register, 1 << 15)) != 0;
             const explicit_argc: usize = @intCast(instr.b & ~@as(opcode.Register, 1 << 15));
-            const object = regRead(slots, base, instr.a);
-            const key = regRead(slots, base, instr.a + 1);
+            const object = regRead(regs, base, instr.a);
+            const key = regRead(regs, base, instr.a + 1);
 
             const lookup_result = (try self.resolveField(object, key)) orelse {
                 const key_name = if (key.asAtom()) |atom| self.atomName(atom) else revo.std_lib.dataToString(key);
@@ -928,14 +852,14 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             };
 
             if (colon) {
-                regWrite(slots, base, instr.a, lookup_result.value);
-                regWrite(slots, base, instr.a + 1, object);
+                regWrite(regs, base, instr.a, lookup_result.value);
+                regWrite(regs, base, instr.a + 1, object);
                 self.callRegister(.{ .op = .call, .a = instr.a, .b = @intCast(explicit_argc + 1), .c = instr.c }) catch |e| switch (e) {
                     error.Parked => break :dispatch,
                     else => return self.evalFailure(e),
                 };
             } else {
-                regWrite(slots, base, instr.a + 1, lookup_result.value);
+                regWrite(regs, base, instr.a + 1, lookup_result.value);
                 self.callRegister(.{ .op = .call, .a = instr.a + 1, .b = @intCast(explicit_argc), .c = instr.c }) catch |e| switch (e) {
                     error.Parked => break :dispatch,
                     else => return self.evalFailure(e),
@@ -943,6 +867,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
 
             base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            regs = fiber.registers[0..fiber.registers_len];
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
@@ -954,6 +879,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             self.returnRegister(instr) catch |e| return self.evalFailure(e);
             if (fiber.frames.items.len == 0) break :dispatch;
             base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            regs = fiber.registers[0..fiber.registers_len];
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
@@ -963,16 +889,15 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .spawn => {
             self.spawnRegister(instr, base) catch |e| return self.evalFailure(e);
+            regs = fiber.registers[0..fiber.registers_len];
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .join => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const handle = regRead(slots, base, instr.a);
+            const handle = regRead(regs, base, instr.a);
             const target_num = handle.asNum() orelse return self.evalFailure(error.TypeError);
             const target_id = if (target_num >= 0 and @floor(target_num) == target_num)
                 @as(usize, @intFromFloat(target_num))
@@ -982,7 +907,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 return self.evalFailure(error.TypeError);
             const target = &self.sched.fibers.items[target_id];
             if (target.state == .dead) {
-                regWrite(slots, base, instr.a, target.result);
+                regWrite(regs, base, instr.a, target.result);
             } else {
                 try target.waiters.append(alloc, self.sched.current_fiber);
                 self.sched.parkCurrentWithResult(.{ .join = target_id }, base + instr.a);
@@ -1000,7 +925,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             break :dispatch;
         },
         .halt => {
-            const result = regRead(fiber.registers[0..fiber.registers_len], base, instr.a);
+            const result = regRead(regs, base, instr.a);
             fiber.registers_len = 0;
             try self.push(result);
             fiber.running = false;
@@ -1008,49 +933,44 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             break :dispatch;
         },
         .range_init => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const start = regRead(slots, base, instr.b);
-            const limit = regRead(slots, base, instr.c);
-            const step = regRead(slots, base, @intCast(instr.bx));
-            regWrite(slots, base, instr.a, start);
-            regWrite(slots, base, instr.a + 1, step);
-            regWrite(slots, base, instr.a + 2, limit);
+            const start = regRead(regs, base, instr.b);
+            const limit = regRead(regs, base, instr.c);
+            const step = regRead(regs, base, @intCast(instr.bx));
+            regWrite(regs, base, instr.a, start);
+            regWrite(regs, base, instr.a + 1, step);
+            regWrite(regs, base, instr.a + 2, limit);
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .range_next => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const current = (regRead(slots, base, instr.b)).as_number() catch return self.evalFailure(error.TypeError);
-            const step = (regRead(slots, base, instr.b + 1)).as_number() catch return self.evalFailure(error.TypeError);
-            const limit = (regRead(slots, base, instr.b + 2)).as_number() catch return self.evalFailure(error.TypeError);
+            const current = (regRead(regs, base, instr.b)).as_number() catch return self.evalFailure(error.TypeError);
+            const step = (regRead(regs, base, instr.b + 1)).as_number() catch return self.evalFailure(error.TypeError);
+            const limit = (regRead(regs, base, instr.b + 2)).as_number() catch return self.evalFailure(error.TypeError);
 
             const has_next = (step > 0 and current < limit) or (step < 0 and current > limit);
 
-            regWrite(slots, base, instr.a, Data.new.num(current));
+            regWrite(regs, base, instr.a, Data.new.num(current));
             if (instr.c != 0) {
-                const index_reg = regRead(slots, base, instr.c);
+                const index_reg = regRead(regs, base, instr.c);
                 const index = index_reg.asNum() orelse 0.0;
-                if (has_next) regWrite(slots, base, instr.c, Data.new.num(index + 1));
+                if (has_next) regWrite(regs, base, instr.c, Data.new.num(index + 1));
             }
-            regWrite(slots, base, @intCast(instr.bx), Data.new.boolean(has_next));
+            regWrite(regs, base, @intCast(instr.bx), Data.new.boolean(has_next));
 
-            if (has_next) regWrite(slots, base, instr.b, Data.new.num(current + step));
+            if (has_next) regWrite(regs, base, instr.b, Data.new.num(current + step));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .range_for => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            var current = (regRead(slots, base, instr.a)).as_number() catch return self.evalFailure(error.TypeError);
-            const step = (regRead(slots, base, instr.b)).as_number() catch return self.evalFailure(error.TypeError);
-            const limit = (regRead(slots, base, instr.c)).as_number() catch return self.evalFailure(error.TypeError);
+            var current = (regRead(regs, base, instr.a)).as_number() catch return self.evalFailure(error.TypeError);
+            const step = (regRead(regs, base, instr.b)).as_number() catch return self.evalFailure(error.TypeError);
+            const limit = (regRead(regs, base, instr.c)).as_number() catch return self.evalFailure(error.TypeError);
             const max_iter: f64 = @floatFromInt(instr.bx);
 
             var i: f64 = 0;
@@ -1060,21 +980,18 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 current += step;
                 i += 1;
             }
-            regWrite(slots, base, instr.a, Data.new.num(current));
+            regWrite(regs, base, instr.a, Data.new.num(current));
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .unwrap_result => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const val = regRead(slots, base, instr.a);
+            const val = regRead(regs, base, instr.a);
             const propagate_errors = instr.bx == 0;
 
             const tuple_id = if (val.asTuple()) |tid| tid else {
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -1082,7 +999,6 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             };
             const tuple = try self.tuples.get(tuple_id);
             if (tuple.items.len == 0) {
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -1111,14 +1027,12 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     }
                     self.returnRegister(.{ .op = .ret, .a = instr.a }) catch |e| return self.evalFailure(e);
 
-                    if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                     if (fiber.pc >= fiber.program.len) break :dispatch;
                     instr = fiber.program[fiber.pc];
                     fiber.pc += 1;
                     continue :dispatch instr.op;
                 }
 
-                if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
                 if (fiber.pc >= fiber.program.len) break :dispatch;
                 instr = fiber.program[fiber.pc];
                 fiber.pc += 1;
@@ -1127,19 +1041,17 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (tag.asAtom() == revo.core_atoms.atom_id(.ok)) {
                 if (tuple.items.len > 1) {
-                    regWrite(slots, base, instr.a, tuple.items[1]);
+                    regWrite(regs, base, instr.a, tuple.items[1]);
                 }
             }
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .jump_if_not_nil_and_not_err => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const val = regRead(slots, base, instr.a);
+            const val = regRead(regs, base, instr.a);
             const is_nil = if (val.asAtom()) |a| a == revo.core_atoms.atom_id(.nil) else false;
             const is_err = if (val.asTuple()) |tid| blk: {
                 const tuple2 = try self.tuples.get(tid);
@@ -1152,15 +1064,13 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (!is_nil and !is_err) fiber.pc = instr.bx;
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
         .jump_if_err => {
-            const slots = fiber.registers[0..fiber.registers_len];
-            const val = regRead(slots, base, instr.a);
+            const val = regRead(regs, base, instr.a);
             const is_err = if (val.asTuple()) |tid| blk: {
                 const tuple2 = try self.tuples.get(tid);
                 if (tuple2.items.len > 0) {
@@ -1171,7 +1081,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             } else false;
 
             if (is_err) fiber.pc = instr.bx;
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+
             if (fiber.pc >= fiber.program.len) break :dispatch;
             instr = fiber.program[fiber.pc];
             fiber.pc += 1;
