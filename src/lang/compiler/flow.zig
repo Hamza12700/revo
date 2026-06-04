@@ -17,7 +17,7 @@ const state = @import("state.zig");
 const type_check = @import("type_check.zig");
 const types_mod = @import("types.zig");
 
-const validate_if_branches: bool = false;
+pub const validate_if_branches: bool = false;
 
 const TypeHint = struct {
     name: []const u8,

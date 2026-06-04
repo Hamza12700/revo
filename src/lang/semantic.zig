@@ -505,7 +505,7 @@ const SemanticChecker = struct {
         const then_type = try self.analyzeNode(v.then_expr);
         if (v.else_expr) |else_expr| {
             const else_type = try self.analyzeNode(else_expr);
-            if (!then_type.eql(else_type) and then_type != .any and else_type != .any) {
+            if (@import("compiler/flow.zig").validate_if_branches and !then_type.eql(else_type) and then_type != .any and else_type != .any) {
                 try self.appendError(
                     try std.fmt.allocPrint(self.alloc, "if/else branches must have matching types, got {s} and {s}", .{
                         types_mod.typeName(then_type),
