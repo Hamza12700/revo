@@ -70,6 +70,7 @@ pub const Closure = struct {
 pub const Upvalue = struct {
     open_index: ?usize,
     closed: Data,
+    next_open: ?UpvalueID, // intrusive linked list (null = tail)
 };
 
 pub const Function = union(enum) {
@@ -442,8 +443,8 @@ test "function pool prototype ownership and upvalue slot reuse" {
     try std.testing.expectEqual(@as(LocalSlot, 0), stored.upvalue_specs[0].index);
     try std.testing.expectEqual(@as(LocalSlot, 1), stored.const_locals[0]);
 
-    const up_id = try pool.createUpvalue(.{ .open_index = null, .closed = Data.new.num(1) });
+    const up_id = try pool.createUpvalue(.{ .open_index = null, .closed = Data.new.num(1), .next_open = null });
     pool.sweep();
-    const up_reused = try pool.createUpvalue(.{ .open_index = null, .closed = Data.new.num(2) });
+    const up_reused = try pool.createUpvalue(.{ .open_index = null, .closed = Data.new.num(2), .next_open = null });
     try std.testing.expectEqual(up_id, up_reused);
 }

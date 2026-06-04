@@ -226,8 +226,13 @@ pub inline fn markRoots(self: *VM) void {
             if (frame.closure_id) |id|
                 self.functions.mark(id, self);
         }
-        for (fiber.open_upvalues.items) |entry|
-            self.functions.markUpvalue(entry.id, self);
+        {
+            var next_up = fiber.open_upvalues;
+            while (next_up) |id| {
+                self.functions.markUpvalue(id, self);
+                next_up = (self.functions.getUpvalue(id) catch break).next_open;
+            }
+        }
     }
 
     var globals_it = self.globals.iterator();
