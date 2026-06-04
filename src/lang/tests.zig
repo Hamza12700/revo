@@ -393,6 +393,17 @@ test "and/or preserve value semantics" {
     try t.top_true("(:t or :true or not nil or 1 or 1.0 or 67) == :t");
 }
 
+test "chained or conditions in if parse and run" {
+    try t.top_number(
+        \\ const nextword = "."
+        \\ if nextword == "." or nextword == "," or nextword == "!" or nextword == "?" do
+        \\     1
+        \\ end else do
+        \\     0
+        \\ end
+    , 1);
+}
+
 test "assignment & op combinations" {
     try t.top_number("let t = 41 t += 1 t", 42);
     try t.top_number("let t = 43 t -= 1 t", 42);
@@ -520,6 +531,41 @@ test "method calls require obj:method(args)" {
         \\ const Email = {parse = fn(x) x}
         \\ Email.parse(42)
     , 42);
+}
+
+test "plain struct print works" {
+    try t.top_nil(
+        \\ struct Box {
+        \\     state = {},
+        \\ }
+        \\ const c = Box{}
+        \\ print(c)
+    );
+}
+
+test "method call after train keeps receiver alive" {
+    try t.top_number(
+        \\ struct Box {
+        \\     state = {},
+        \\     fn train(self) self,
+        \\     fn take(self, n: int) n,
+        \\ }
+        \\ const c = Box{}
+        \\ c:train()
+        \\ c:take(50)
+    , 50);
+}
+
+test "plain print after train still works" {
+    try t.top_atom(
+        \\ struct Box {
+        \\     state = {},
+        \\     fn train(self) self,
+        \\ }
+        \\ const c = Box{}
+        \\ c:train()
+        \\ print(c)
+    , "ok");
 }
 
 test "metatable-backed constructor and instance methods compile" {
@@ -884,8 +930,47 @@ test "foreach loop" {
     , 2);
 }
 
-test "for loop iterates tuple values" {
-    try t.top_true(":true");
+test "for loop iterates table values" {
+    try t.top_number(
+        \\ let seen = 0
+        \\ for val, i in {10, 20, 30} do
+        \\     if i == 0 do
+        \\         seen = seen + val
+        \\     end else do
+        \\         if i == 1 do
+        \\             seen = seen + val
+        \\         end else do
+        \\             seen = seen + val
+        \\         end
+        \\     end
+        \\ end
+        \\ seen
+    , 60);
+}
+
+test "indexed table iteration gets value and index" {
+    try t.top_number(
+        \\ for val, i in {10, 20, 30} do
+        \\     if i == 1 return val
+        \\ end
+    , 20);
+}
+
+test "simple table_get with integer key" {
+    try t.top_number(
+        \\ let t = {10, 20, 30}
+        \\ t[0] + t[1] + t[2]
+    , 60);
+}
+
+test "for loop over table prints all values" {
+    try t.top_number(
+        \\ let s = 0
+        \\ let t = {10, 20, 30}
+        \\ for v in t
+        \\     s = s + v
+        \\ s
+    , 60);
 }
 
 test "inner for loop" {
@@ -944,6 +1029,16 @@ test "while loop via while <cond> do <expr> end" {
         \\ end
         \\ x
     , 5);
+}
+
+test "while loop isn't ran unconditionally" {
+    try t.top_number(
+        \\ let x = 0
+        \\ while :false do
+        \\     x = x + 1
+        \\ end
+        \\ x
+    , 0);
 }
 
 test "while loop counts down" {
@@ -1546,6 +1641,17 @@ test "struct fields are mutable" {
     , 3);
 }
 
+test "defaulted struct fields fill in missing values" {
+    try t.top_number(
+        \\ struct Chain {
+        \\     state = {6, 7},
+        \\     count: number = 8,
+        \\ }
+        \\ const c = Chain{}
+        \\ c.count + c.state[1]
+    , 15);
+}
+
 test "structs reject bad inputs" {
     try t.expectRuntimeFailureWithMessage(
         \\ struct User {
@@ -1831,6 +1937,19 @@ test "match falls through to wildcard" {
     , 999);
 }
 
+test "match wildcard arm after explicit arms runs" {
+    try t.top_number(
+        \\ const nextword = "."
+        \\ let a = match nextword
+        \\ | "." => 6
+        \\ | _ => 2
+        \\ let b = match nextword
+        \\ | "," => 1
+        \\ | _ => 7
+        \\ a + b
+    , 13);
+}
+
 test "match guard prevents match" {
     try t.top_number(
         \\ const x = 15
@@ -1941,6 +2060,49 @@ test "num alias works in fn and method signatures" {
         \\ const c = Chain{}
         \\ c:take(50)
     , 50);
+}
+
+test "num alias works in range bounds" {
+    try t.top_number(
+        \\ fn f(count: num) do
+        \\     let out = 0
+        \\     for i in 0..count do
+        \\         out = out + 1
+        \\     end
+        \\     out
+        \\ end
+        \\ f(50)
+    , 50);
+}
+
+test "markov take body" {
+    try t.top_string(
+        \\ fn random(n) math.floor((time.now_ns() / 1000) % n)
+        \\ fn pref(a, b) fmt("%v %v", a, b)
+        \\ const NOWORD = string_of(10)
+        \\ struct Chain {
+        \\   state = {},
+        \\   fn take(self, count: num) -> string do
+        \\     let out = ""
+        \\     let w1 = NOWORD
+        \\     let w2 = NOWORD
+        \\     for i in 0..count do
+        \\       let list = self.state[pref(w1, w2)]
+        \\       if not list break()
+        \\       let n = len(list)
+        \\       if n < 1 break()
+        \\       let nextword = list[random(n)]
+        \\       if nextword == NOWORD break()
+        \\       out = fmt("%v%v ", out, nextword)
+        \\       w1 = w2
+        \\       w2 = nextword
+        \\     end
+        \\     out
+        \\   end
+        \\ }
+        \\ const c = Chain{state = {[pref(NOWORD, NOWORD)] = {"hello"}}}
+        \\ c:take(1)
+    , "hello ");
 }
 
 test "typed binding label names the expected type" {
@@ -2587,6 +2749,15 @@ test "nested ok tuples? extracts inner" {
     try t.top_type(
         \\ (:ok, (:inner, 42))?
     , .tuple);
+}
+
+test "top-level ? on error crashes loudly" {
+    try t.expectCompileError(
+        \\ fn ok() -> (:ok, num) do
+        \\   (:ok, 1)
+        \\ end
+        \\ ok()?
+    , .ParseError);
 }
 
 //

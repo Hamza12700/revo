@@ -1923,6 +1923,58 @@ test "workspace diagnostics undefined name" {
     try std.testing.expect(diag != null);
 }
 
+test "workspace diagnostics warn on missing return arrow" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var ws = try Workspace.init(alloc);
+    defer ws.deinit();
+
+    const id = try ws.open("<test>",
+        \\ fn demo() string do
+        \\   "ok"
+        \\ end
+    );
+    const diag = try ws.diagnostics(alloc, id, .{});
+    try std.testing.expect(diag != null);
+}
+
+test "workspace diagnostics merge semantic and lower failures" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var ws = try Workspace.init(alloc);
+    defer ws.deinit();
+
+    const source =
+        \\ type Result = (:ok, any) | (:err, atom)
+        \\ fn bind(what: any, where: num) -> Result do
+        \\   "ok"
+        \\ end
+        \\ bind(1, "hi")
+    ;
+    const id = try ws.open("<test>", source);
+    const diag = try ws.diagnostics(alloc, id, .{});
+    try std.testing.expect(diag != null);
+
+    const report = switch (diag.?) {
+        .parse => |f| f.report,
+        .expand => |f| f.report,
+        .lower => |f| f.report,
+        .semantic => |f| f.report,
+    };
+
+    var err_count: usize = 0;
+    for (report.parts) |part| {
+        if (part == .@"error") err_count += 1;
+    }
+    try std.testing.expect(err_count >= 2);
+    try std.testing.expect(report.message.len != 0);
+    try std.testing.expect(std.mem.indexOf(u8, report.message, "return type") != null);
+}
+
 test "workspace stale version tracking" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
