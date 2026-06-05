@@ -409,7 +409,14 @@ pub const Session = struct {
 
         self.vm.setProgramDebugInfo(artifact.spans, source, "<repl>") catch {};
 
-        const run_result = revo.module.runCompiledSessionReport(self.vm, "<repl>", artifact.instructions) catch |err| {
+        // const cwd_path = try std.Io.Dir.cwd().realPathFileAlloc(self.vm.runtime.io, ".", self.gpa);
+        // defer self.gpa.free(cwd_path);
+
+        const run_result = revo.module.runCompiledSessionReport(
+            self.vm,
+            ".",
+            artifact.instructions,
+        ) catch |err| {
             try out.print("runtime error: {}\n", .{err});
             self.clearSnippet();
             return true;
