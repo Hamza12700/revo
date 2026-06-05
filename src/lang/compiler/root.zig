@@ -592,7 +592,6 @@ pub const Compiler = struct {
                     expr,
                     "union type expression used as a value",
                 );
-                if (try fold.maybeFoldConstBinary(self, b)) return;
 
                 try self.compile(b.left, true);
                 try self.compile(b.right, true);

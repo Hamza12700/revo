@@ -9,15 +9,6 @@ pub const FieldDef = struct {
     default_val: ?revo.memory.Data = null,
 };
 
-fn typeNameToTypeInfo(name: []const u8) types_mod.TypeInfo {
-    if (std.mem.eql(u8, name, "int")) return .int;
-    if (std.mem.eql(u8, name, "float")) return .float;
-    if (std.mem.eql(u8, name, "string")) return .string;
-    if (std.mem.eql(u8, name, "bool")) return .bool;
-    if (std.mem.eql(u8, name, "void")) return .void;
-    return .any;
-}
-
 pub const StructLayouter = struct {
     alloc: std.mem.Allocator,
 
