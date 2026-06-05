@@ -23,11 +23,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/vm/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const revo_mod = b.addModule("revo", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const all_mods = [_]*std.Build.Module{ vm_mod, revo_mod };
     const imports = [_]struct { []const u8, *std.Build.Module }{
