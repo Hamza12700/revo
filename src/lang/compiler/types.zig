@@ -8,8 +8,6 @@ pub const UnionVariant = struct {
 };
 
 pub const TypeInfo = union(enum) {
-    // TODO: remove
-    void,
     bool,
     // TODO: maybe unify here maybe split at vm
     int,
@@ -24,7 +22,6 @@ pub const TypeInfo = union(enum) {
 
     pub fn eql(self: TypeInfo, other: TypeInfo) bool {
         return switch (self) {
-            .void => other == .void,
             .bool => other == .bool,
             .int => other == .int,
             .float => other == .float,
@@ -231,7 +228,6 @@ pub fn inferIfType(then_type: TypeInfo, else_type: ?TypeInfo) TypeInfo {
         if (et == .any) return then_type;
         return .any;
     }
-    if (then_type == .void) return .void;
     return .any;
 }
 
@@ -274,7 +270,6 @@ pub fn resolveTypeName(ctx: anytype, name: []const u8) TypeInfo {
     // };
     if (std.mem.eql(u8, name, "string")) return .string;
     if (std.mem.eql(u8, name, "bool")) return .bool;
-    if (std.mem.eql(u8, name, "void")) return .void;
     if (std.mem.eql(u8, name, "any")) return .any;
     if (std.mem.eql(u8, name, "function")) return .{ .function = &ANY_FN_SIG };
     if (name.len > 0 and name[0] == ':') return .{ .atom = name };
@@ -287,7 +282,7 @@ pub fn inferExprType(ctx: anytype, node: *const ast.Node) TypeInfo {
         .number => |n| if (n.is_float) .float else .int,
         .string, .multiline_string => .string,
         .hash => |name| .{ .atom = name },
-        .nil => .void,
+        .nil => .any,
         .ident => |name| ctx.inferIdentType(name),
         .unary => |u| inferUnaryOp(u.op, inferExprType(ctx, u.expr)),
         .binary => |b| inferBinaryOp(b.op, inferExprType(ctx, b.left), inferExprType(ctx, b.right)),
@@ -300,19 +295,19 @@ pub fn inferExprType(ctx: anytype, node: *const ast.Node) TypeInfo {
         .index => |index| inferIndexType(ctx, index.object, index.key),
         .fn_expr => |fn_expr| ctx.inferFnType(fn_expr.params, fn_expr.return_type),
         .block => |exprs| inferBlockResultType(ctx, exprs),
-        .return_expr => .void,
+        .return_expr => .any,
         .loop_expr => |v| inferExprType(ctx, v.body),
         .for_loop => |v| inferExprType(ctx, v.body),
         .while_loop => |v| inferExprType(ctx, v.body),
-        .break_expr => .void,
+        .break_expr => .any,
         .try_expr => |inner| inferExprType(ctx, inner),
         .orelse_expr => |v| inferOrelseType(inferExprType(ctx, v.left), inferExprType(ctx, v.right)),
         .comp_block, .import_expr, .test_block, .test_suite, .macro_expr, .proc_macro => .any,
         .range_literal, .match_expr, .assign_expr => .any,
-        .decl, .binding => .void,
+        .decl, .binding => .any,
         .tuple_pattern => .any,
         .struct_def => |def| .{ .struct_type = def.name },
-        .type_alias => .void,
+        .type_alias => .any,
     };
 }
 
@@ -345,7 +340,7 @@ pub fn inferIndexType(ctx: anytype, object: *const ast.Node, key: *const ast.Nod
 }
 
 pub fn inferBlockResultType(ctx: anytype, exprs: []const *ast.Node) TypeInfo {
-    if (exprs.len == 0) return .void;
+    if (exprs.len == 0) return .any;
     return inferExprType(ctx, exprs[exprs.len - 1]);
 }
 

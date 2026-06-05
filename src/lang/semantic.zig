@@ -223,7 +223,7 @@ const SemanticChecker = struct {
             sig.sig.return_type = body_type;
         }
         // validate explicit return type against inferred body type
-        if (sig.return_type != .any and body_type != .void and !types_mod.canCoerce(body_type, sig.return_type)) {
+        if (sig.return_type != .any and body_type != .any and !types_mod.canCoerce(body_type, sig.return_type)) {
             try self.appendReturnMismatch(fn_expr.body.span, sig.return_type, body_type);
         }
         return .{ .function = &sig.sig };
@@ -262,7 +262,7 @@ const SemanticChecker = struct {
         _ = span;
         try self.pushScope();
         defer self.popScope();
-        var last: types_mod.TypeInfo = .void;
+        var last: types_mod.TypeInfo = .any;
         for (exprs) |expr| {
             last = try self.analyzeNode(expr);
         }
@@ -283,7 +283,7 @@ const SemanticChecker = struct {
         _ = span;
         const t = self.evalTypeExpr(alias.type_expr) catch .any;
         try self.type_aliases.put(alias.name, t);
-        return .void;
+        return .any;
     }
 
     fn analyzeStruct(self: *SemanticChecker, def: anytype, span: ast.Span) !types_mod.TypeInfo {
@@ -341,7 +341,7 @@ const SemanticChecker = struct {
                 _ = try self.analyzeNode(binding.value);
                 return self.declarePatternNames(binding.target);
             }
-            return .void;
+            return .any;
         }
         const name = binding.target.expr.ident;
         if (binding.value.expr == .fn_expr) {
@@ -426,29 +426,29 @@ const SemanticChecker = struct {
             .field => |field| {
                 const object_type = types_mod.inferExprType(self, field.object);
                 if (object_type == .struct_type) {
-                    const layout = self.struct_layouts.get(object_type.struct_type) orelse return .void;
+                    const layout = self.struct_layouts.get(object_type.struct_type) orelse return .any;
                     for (layout) |f| {
                         if (!std.mem.eql(u8, f.name, field.name)) continue;
                         if (!types_mod.canCoerce(value_type, f.field_type)) {
                             try self.appendFieldMismatch(field, f.field_type, value_type);
                         }
-                        return .void;
+                        return .any;
                     }
                 }
             },
             else => {},
         }
-        return .void;
+        return .any;
     }
 
     fn analyzeReturn(self: *SemanticChecker, val: ?*ast.Node, span: ast.Span) !types_mod.TypeInfo {
-        const expr = val orelse return .void;
+        const expr = val orelse return .any;
         const actual = try self.analyzeNode(expr);
         const expected = if (self.return_types.items.len != 0) self.return_types.items[self.return_types.items.len - 1] else .any;
         if (expected != .any and !types_mod.canCoerce(actual, expected)) {
             try self.appendReturnMismatch(span, expected, actual);
         }
-        return .void;
+        return .any;
     }
 
     fn analyzeCall(self: *SemanticChecker, call: anytype, span: ast.Span) !types_mod.TypeInfo {
@@ -519,7 +519,7 @@ const SemanticChecker = struct {
 
             return if (then_type == .any) else_type else then_type;
         }
-        return .void;
+        return .any;
     }
 
     fn appendTypeMismatch(
