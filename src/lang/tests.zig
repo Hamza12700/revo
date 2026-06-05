@@ -2519,6 +2519,7 @@ test "fn name(params) multiple named functions" {
 // shared binding gotcha doc
 //
 test "closure captured in loop" {
+    // intended behaviour
     if (true) return error.SkipZigTest;
     try t.top_number(
         \\ const fs = {}
