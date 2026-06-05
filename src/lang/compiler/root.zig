@@ -1582,16 +1582,6 @@ pub const Compiler = struct {
                     "name with ? is reserved for functions returning bool",
                     &.{},
                 );
-            if (binding.value.expr == .fn_expr) {
-                try self.compileFn(
-                    binding.value.expr.fn_expr.params,
-                    binding.value.expr.fn_expr.return_type,
-                    binding.value.expr.fn_expr.body,
-                    name,
-                    null,
-                );
-            } else try self.compile(binding.value, true);
-
             if (binding.type_name) |tn| {
                 type_check.validateBindingType(self, tn, binding.value) catch |err| switch (err) {
                     error.TypeError => {
@@ -1619,6 +1609,16 @@ pub const Compiler = struct {
                     error.OutOfMemory => return error.OutOfMemory,
                 };
             }
+
+            if (binding.value.expr == .fn_expr) {
+                try self.compileFn(
+                    binding.value.expr.fn_expr.params,
+                    binding.value.expr.fn_expr.return_type,
+                    binding.value.expr.fn_expr.body,
+                    name,
+                    null,
+                );
+            } else try self.compile(binding.value, true);
 
             const inferred_type = if (binding.type_name) |tn|
                 try types.evalTypeExpr(self, tn)

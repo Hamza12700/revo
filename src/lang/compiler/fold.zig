@@ -159,5 +159,3 @@ fn tryFoldUnary(self: *Compiler, inst: *ir.IrInst) !bool {
     }
     return true;
 }
-
-

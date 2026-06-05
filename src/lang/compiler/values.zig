@@ -259,6 +259,29 @@ fn compileAssignSimple(
 ) !void {
     switch (target.expr) {
         .ident => |name| {
+            type_check.validateAssignmentType(self, target, value) catch |err| switch (err) {
+                error.TypeError => {
+                    const loc = state.resolveLocalVar(self, name) orelse unreachable;
+                    const type_name = loc.type_name orelse unreachable;
+                    const actual = type_check.inferExprType(self, value);
+                    const msg = try std.fmt.allocPrint(
+                        self.alloc,
+                        "`{s}` wants {s}, got {s}",
+                        .{ name, type_name, types_mod.typeName(actual) },
+                    );
+                    return self.setFailureParts(
+                        .ParseError,
+                        .{
+                            .span = value.span,
+                            .role = .primary,
+                            .message = try std.fmt.allocPrint(self.alloc, "not {s}!", .{type_name}),
+                        },
+                        msg,
+                        &.{},
+                    );
+                },
+            };
+
             try self.compile(value, true);
             try self.regDupe();
             if (state.resolveLocal(self, name)) |slot| {
@@ -266,30 +289,6 @@ fn compileAssignSimple(
                 state.markLocalValueKind(self, slot, .unknown);
                 try syncLocalTableFields(self, slot, value);
                 const inferred_type = type_check.inferExprType(self, value);
-
-                type_check.validateAssignmentType(self, target, value) catch |err| switch (err) {
-                    error.TypeError => {
-                        const loc = state.resolveLocalVar(self, name) orelse unreachable;
-                        const type_name = loc.type_name orelse unreachable;
-                        const actual = type_check.inferExprType(self, value);
-                        const msg = try std.fmt.allocPrint(
-                            self.alloc,
-                            "`{s}` wants {s}, got {s}",
-                            .{ name, type_name, types_mod.typeName(actual) },
-                        );
-                        return self.setFailureParts(
-                            .ParseError,
-                            .{
-                                .span = value.span,
-                                .role = .primary,
-                                .message = try std.fmt.allocPrint(self.alloc, "not {s}!", .{type_name}),
-                            },
-                            msg,
-                            &.{},
-                        );
-                    },
-                };
-
                 try state.setLocalTypeHint(self, name, inferred_type);
             } else if (try state.resolveUpvalue(self, name)) |slot| {
                 type_check.validateUpvalueAssignmentType(self, name, value) catch |err| switch (err) {
