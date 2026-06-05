@@ -1044,12 +1044,14 @@ pub fn read(args: []const Data, vm: *VM) !NativeResult {
 
     var buf: [1]u8 = undefined;
     while (true) {
-        const n = try std.posix.read(file.handle, &buf);
-        if (n == 0) {
-            if (result.items.len > 0)
-                return resultTuple(vm, .ok, try vm.adoptDataString(try result.toOwnedSlice(vm.runtime.alloc)));
-            return .Err(vm, "EndOfStream");
-        }
+        _ = file.readStreaming(vm.runtime.io, &.{buf[0..]}) catch |err| switch (err) {
+            error.EndOfStream => {
+                if (result.items.len > 0)
+                    return resultTuple(vm, .ok, try vm.adoptDataString(try result.toOwnedSlice(vm.runtime.alloc)));
+                return .Err(vm, "EndOfStream");
+            },
+            else => |e| return e,
+        };
         if (!read_eof and buf[0] == delim)
             return resultTuple(vm, .ok, try vm.adoptDataString(try result.toOwnedSlice(vm.runtime.alloc)));
         try result.append(vm.runtime.alloc, buf[0]);
