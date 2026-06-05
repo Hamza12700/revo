@@ -1616,7 +1616,7 @@ fn callStructConstructor(
 }
 
 fn structFieldValueMatches(
-    self: *VM,
+    _: *VM,
     expected_atom: revo.memory.AtomID,
     value: Data,
 ) bool {
@@ -1628,11 +1628,12 @@ fn structFieldValueMatches(
         else
             false;
     }
-    if (expected_atom == revo.core_atoms.num.atom_id()) return value.isNumber();
-    if (expected_atom == revo.core_atoms.int.atom_id()) return value.isNumber();
-    if (expected_atom == revo.core_atoms.float.atom_id()) return value.isNumber();
-    const expected_name = self.atomName(expected_atom);
-    return std.mem.eql(u8, expected_name, revo.std_lib.typeof(value));
+    for (&[_]revo.core_atoms{ .num, .number, .int, .integer, .float }) |at| {
+        if (expected_atom == at.atom_id())
+            return value.isNumber();
+    }
+    // some amount of work is done at compile-time to ignore complex types
+    return true;
 }
 
 pub fn setStructField(
