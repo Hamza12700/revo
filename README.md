@@ -145,7 +145,7 @@ available on most package managers as `zig`
 ## on posix (linux/bsd/mac)
 
 ```bash
-git clone https://github.com/if-not-nil/revo && cd revo
+git clone https://github.com/if-not-nil/revo --recursive && cd revo
 git submodule update --init --recursive
 # or -Doptimize=ReleaseSmall for a smaller executable
 zig build --fetch -Doptimize=ReleaseFast

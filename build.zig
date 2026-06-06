@@ -52,11 +52,6 @@ pub fn build(b: *std.Build) void {
             mod.addImport(imp[0], imp[1]);
 
     //
-    // git submodule (shared)
-    //
-    const git_submod_step = addGitSubmoduleStep(b);
-
-    //
     // main exe
     //
     const exe_root = b.createModule(.{
@@ -77,14 +72,12 @@ pub fn build(b: *std.Build) void {
     exe.rdynamic = true;
 
     const install_exe = b.addInstallArtifact(exe, .{});
-    install_exe.step.dependOn(git_submod_step);
     b.getInstallStep().dependOn(&install_exe.step);
 
     //
     // run step
     //
     const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(git_submod_step);
     if (b.args) |args| run_cmd.addArgs(args);
     b.step("run", "run the cli").dependOn(&run_cmd.step);
 
@@ -92,7 +85,6 @@ pub fn build(b: *std.Build) void {
     // check step
     //
     const check_step = b.step("check", "type-check without codegen or linking");
-    check_step.dependOn(git_submod_step);
     check_step.dependOn(&b.addTest(.{ .root_module = vm_mod, .filters = test_filters }).step);
     check_step.dependOn(&b.addTest(.{ .root_module = revo_mod, .filters = test_filters }).step);
     check_step.dependOn(&b.addTest(.{ .root_module = exe_root, .filters = test_filters }).step);
@@ -156,7 +148,6 @@ pub fn build(b: *std.Build) void {
         const install = b.addInstallArtifact(release_exe, .{
             .dest_dir = .{ .override = .{ .custom = "release" } },
         });
-        install.step.dependOn(git_submod_step);
         release_step.dependOn(&install.step);
     }
 
@@ -178,7 +169,6 @@ pub fn build(b: *std.Build) void {
 
     const lib_step = b.step("lib", "build the erevo library");
     const install_lib = b.addInstallArtifact(lib, .{});
-    install_lib.step.dependOn(git_submod_step);
     lib_step.dependOn(&install_lib.step);
 
     check_step.dependOn(&b.addTest(.{ .root_module = erevo_mod, .filters = test_filters }).step);
@@ -271,18 +261,6 @@ fn binName(b: *std.Build, triple: []const u8) []const u8 {
     return b.fmt("revo-nightly-{s}-{s}", .{ triple, date_str });
     // release
     // return b.fmt("revo-{s}-{s}", .{ VERSION, triple });
-}
-
-fn addGitSubmoduleStep(b: *std.Build) *std.Build.Step {
-    const stamp = ".zig-cache/submodules-updated";
-    const cmd = b.addSystemCommand(&.{
-        "sh", "-c",
-        b.fmt(
-            "[ {s} -nt .gitmodules ] || (git submodule update --init --recursive && touch {s})",
-            .{ stamp, stamp },
-        ),
-    });
-    return &cmd.step;
 }
 
 fn hasFeature(features: []const u8, name: []const u8) bool {
