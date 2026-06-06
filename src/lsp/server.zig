@@ -8,16 +8,19 @@ const completion = @import("completion.zig");
 const T = lsp.types;
 const ws = lang.workspace;
 
-/// runs the loop
 pub fn main(init: std.process.Init) !void {
+    try runLsp(init.gpa, init.io);
+}
+
+pub fn runLsp(gpa: std.mem.Allocator, io: std.Io) !void {
     var read_buf: [1024]u8 = undefined;
     var stdio = lsp.Transport.Stdio.init(&read_buf, .stdin(), .stdout());
 
-    var handler = try Handler.init(init.gpa, &stdio.transport, init.io);
+    var handler = try Handler.init(gpa, &stdio.transport, io);
     handler.ws.attachVm(&handler.vm);
     defer handler.deinit();
 
-    try lsp.basic_server.run(init.io, init.gpa, &stdio.transport, &handler, std.log.err);
+    try lsp.basic_server.run(io, gpa, &stdio.transport, &handler, std.log.err);
 }
 
 //

@@ -10,14 +10,19 @@ pub fn build(b: *std.Build) void {
     const ReplBackend = enum { isocline, none };
     const repl_backend = b.option(ReplBackend, "repl", "which repl backend to use") orelse .isocline;
 
+    const nolsp = b.option(bool, "nolsp", "Exclude the LSP server from the binary") orelse false;
+    const bundle_lsp = !nolsp and optimize != .Debug;
+
     const build_options = b.addOptions();
     build_options.addOption(ReplBackend, "repl_backend", repl_backend);
     build_options.addOption([]const u8, "version", VERSION);
+    build_options.addOption(bool, "lsp_enabled", bundle_lsp);
 
     // release/run always force isocline
     const forced_build_options = b.addOptions();
     forced_build_options.addOption(ReplBackend, "repl_backend", .isocline);
     forced_build_options.addOption([]const u8, "version", VERSION);
+    forced_build_options.addOption(bool, "lsp_enabled", !nolsp);
 
     const vm_mod = b.addModule("vm", .{
         .root_source_file = b.path("src/vm/root.zig"),
@@ -83,6 +88,37 @@ pub fn build(b: *std.Build) void {
     }
 
     for (imports) |imp| exe_root.addImport(imp[0], imp[1]);
+
+    if (bundle_lsp) {
+        if (b.lazyDependency("lsp_kit", .{})) |lsp_kit_dep| {
+            const lsp_mod = lsp_kit_dep.module("lsp");
+
+            const lsp_server_mod = b.createModule(.{
+                .root_source_file = b.path("src/lsp/server.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            lsp_server_mod.addImport("lsp", lsp_mod);
+            for (imports) |imp| lsp_server_mod.addImport(imp[0], imp[1]);
+            exe_root.addImport("lsp_main", lsp_server_mod);
+        } else {
+            // lsp_kit not fetched yet; use noop stub. maybe there's a better way of doing this, idk
+            std.debug.print("warning: lsp_kit not fetched, LSP won't be bundled. run zig build --fetch if you need it\n", .{});
+            const lsp_noop_mod = b.createModule(.{
+                .root_source_file = b.path("src/lsp/noop.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            exe_root.addImport("lsp_main", lsp_noop_mod);
+        }
+    } else {
+        const lsp_noop_mod = b.createModule(.{
+            .root_source_file = b.path("src/lsp/noop.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        exe_root.addImport("lsp_main", lsp_noop_mod);
+    }
 
     const exe = b.addExecutable(.{ .name = "revo", .root_module = exe_root });
     if (optimize == .Debug) exe.lto = .none;
@@ -170,6 +206,34 @@ pub fn build(b: *std.Build) void {
         // forced_build_options: release always uses isocline
         release_mod.addOptions("build_options", forced_build_options);
         for (imports) |imp| release_mod.addImport(imp[0], imp[1]);
+
+        if (!nolsp) {
+            if (b.lazyDependency("lsp_kit", .{})) |lsp_kit_dep_release| {
+                const lsp_mod_release = lsp_kit_dep_release.module("lsp");
+                const lsp_server_mod_release = b.createModule(.{
+                    .root_source_file = b.path("src/lsp/server.zig"),
+                    .target = release_target,
+                    .optimize = .ReleaseFast,
+                });
+                lsp_server_mod_release.addImport("lsp", lsp_mod_release);
+                for (imports) |imp| lsp_server_mod_release.addImport(imp[0], imp[1]);
+                release_mod.addImport("lsp_main", lsp_server_mod_release);
+            } else {
+                const lsp_noop_mod_release = b.createModule(.{
+                    .root_source_file = b.path("src/lsp/noop.zig"),
+                    .target = release_target,
+                    .optimize = .ReleaseFast,
+                });
+                release_mod.addImport("lsp_main", lsp_noop_mod_release);
+            }
+        } else {
+            const lsp_noop_mod_release = b.createModule(.{
+                .root_source_file = b.path("src/lsp/noop.zig"),
+                .target = release_target,
+                .optimize = .ReleaseFast,
+            });
+            release_mod.addImport("lsp_main", lsp_noop_mod_release);
+        }
 
         const bin_name = b.fmt("revo-{s}-{s}", .{ VERSION, target_str });
         const release_exe = b.addExecutable(.{

@@ -1,5 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const build_opts = @import("build_options");
+const lsp_enabled = build_opts.lsp_enabled;
 
 const revo = @import("revo");
 const Artifact = revo.lang.Artifact;
@@ -27,20 +29,25 @@ const USAGE =
     \\  --docs           statically extract @doc function docs from source
     \\  -h, --help       show this help message
     \\  --version        show version
-    \\
-    \\examples:
-    \\  revo                           start interactive REPL
-    \\  revo script.rv                 run script
-    \\  revo -e "1 + 2"                run inline code
-    \\  revo -e "1 + 2" -i             run inline code and enter REPL
-    \\  revo -b script.rv              compile script to bytecode
-    \\  revo -b -o output.rvo script   compile script with custom output path
-    \\  revo --bench script.rv         run with performance counters
-    \\  revo --dis script.rv           show bytecode disassembly
-    \\  revo --docs script.rv          print extracted docs without running code
-;
+++
+    if (lsp_enabled)
+        \\  --lsp            start the language server
+    else
+        "" ++
+            \\
+            \\examples:
+            \\  revo                           start interactive REPL
+            \\  revo script.rv                 run script
+            \\  revo -e "1 + 2"                run inline code
+            \\  revo -e "1 + 2" -i             run inline code and enter REPL
+            \\  revo -b script.rv              compile script to bytecode
+            \\  revo -b -o output.rvo script   compile script with custom output path
+            \\  revo --bench script.rv         run with performance counters
+            \\  revo --dis script.rv           show bytecode disassembly
+            \\  revo --docs script.rv          print extracted docs without running code
+        ;
 
-const ExecutionMode = enum { run, bench, disassemble, compile, docs };
+const ExecutionMode = enum { run, bench, disassemble, compile, docs, lsp };
 
 const Config = struct {
     mode: ExecutionMode = .run,
@@ -89,6 +96,7 @@ fn handleSource(init: std.process.Init, gpa: Allocator, arena: Allocator, name: 
             defer gpa.free(artifact.spans);
             revo.vm.debug.printDisassembly(artifact, source);
         },
+        .lsp => unreachable,
     }
 }
 
@@ -121,6 +129,10 @@ fn runMain(init: std.process.Init) !void {
     }
 
     const config = try parseArgs(init, args);
+
+    if (config.mode == .lsp) {
+        return try @import("lsp_main").runLsp(init.gpa, init.io);
+    }
 
     // if script path `-` then explicit stdin;
     // else if no script path and stdin is pipe, read stdin then run
@@ -185,6 +197,7 @@ fn runMain(init: std.process.Init) !void {
                     printError(init, "cannot extract docs from bytecode files", .{});
                     return error.InvalidArgs;
                 },
+                .lsp => unreachable,
             }
         } else {
             try handleSource(init, init.gpa, arena, path, source, config);
@@ -356,6 +369,8 @@ fn parseArgs(init: std.process.Init, args: []const [:0]const u8) !Config {
         } else if (std.mem.eql(u8, arg, "--version")) {
             std.debug.print("revo " ++ @import("build_options").version ++ "\n", .{});
             return error.VersionRequested;
+        } else if (if (lsp_enabled) std.mem.eql(u8, arg, "--lsp") else false) {
+            config.mode = .lsp;
         } else if (std.mem.eql(u8, arg, "-")) {
             config.script_path = arg;
             try argv.append(init.arena.allocator(), arg);
