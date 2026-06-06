@@ -7,24 +7,17 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     //
-    // options
+    // feature flags
     //
-    const ReplBackend = enum { isocline, none };
-    const repl_backend = b.option(ReplBackend, "repl", "no isocline?") orelse .isocline;
-
-    const nolsp = b.option(bool, "nolsp", "no lsp?") orelse false;
-    const bundle_lsp = !nolsp and optimize != .Debug;
+    const features_str = b.option([]const u8, "features", "available: isocline, lsp") orelse "isocline,lsp";
+    // TODO: make it be in a struct or something
+    const have_isocline = hasFeature(features_str, "isocline");
+    const have_lsp = hasFeature(features_str, "lsp");
 
     const build_options = b.addOptions();
-    build_options.addOption(ReplBackend, "repl_backend", repl_backend);
+    build_options.addOption(bool, "isocline", have_isocline);
     build_options.addOption([]const u8, "version", VERSION);
-    build_options.addOption(bool, "lsp_enabled", bundle_lsp);
-
-    // release/run always force isocline and lsp
-    const forced_build_options = b.addOptions();
-    forced_build_options.addOption(ReplBackend, "repl_backend", .isocline);
-    forced_build_options.addOption([]const u8, "version", VERSION);
-    forced_build_options.addOption(bool, "lsp_enabled", !nolsp);
+    build_options.addOption(bool, "lsp_enabled", have_lsp);
 
     const test_filters = b.option(
         []const []const u8,
@@ -73,11 +66,11 @@ pub fn build(b: *std.Build) void {
         .link_libc = !is_freestanding,
     });
     if (!is_freestanding) {
-        if (repl_backend == .isocline) add_isocline(exe_root, b);
+        if (have_isocline) add_isocline(exe_root, b);
         exe_root.addOptions("build_options", build_options);
     }
     for (imports) |imp| exe_root.addImport(imp[0], imp[1]);
-    exe_root.addImport("lsp_main", lspModule(b, target, optimize, revo_mod, &imports, bundle_lsp));
+    exe_root.addImport("lsp_main", lspModule(b, target, optimize, revo_mod, &imports, have_lsp));
 
     const exe = b.addExecutable(.{ .name = "revo", .root_module = exe_root });
     if (optimize == .Debug) exe.lto = .none;
@@ -149,10 +142,10 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
             .link_libc = true,
         });
-        add_isocline(release_mod, b);
-        release_mod.addOptions("build_options", forced_build_options);
+        if (have_isocline) add_isocline(release_mod, b);
+        release_mod.addOptions("build_options", build_options);
         for (imports) |imp| release_mod.addImport(imp[0], imp[1]);
-        release_mod.addImport("lsp_main", lspModule(b, release_target, .ReleaseFast, revo_mod, &imports, !nolsp));
+        release_mod.addImport("lsp_main", lspModule(b, release_target, .ReleaseFast, revo_mod, &imports, have_lsp));
 
         const release_exe = b.addExecutable(.{
             .name = binName(b, target_str),
@@ -290,6 +283,15 @@ fn addGitSubmoduleStep(b: *std.Build) *std.Build.Step {
         ),
     });
     return &cmd.step;
+}
+
+fn hasFeature(features: []const u8, name: []const u8) bool {
+    if (features.len == 0) return false;
+    var it = std.mem.splitScalar(u8, features, ',');
+    while (it.next()) |token| {
+        if (std.mem.eql(u8, token, name)) return true;
+    }
+    return false;
 }
 
 fn add_isocline(mod: *std.Build.Module, b: *std.Build) void {

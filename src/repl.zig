@@ -5,14 +5,11 @@ const Allocator = std.mem.Allocator;
 const VM = revo.VM;
 const builtin = @import("builtin");
 
-pub const Backend = build_options.@"build.build.ReplBackend";
-pub const backend: Backend = build_options.repl_backend;
-
-const isocline_c = if (backend == .isocline) @cImport({
+const isocline_c = if (build_options.isocline) @cImport({
     @cInclude("isocline.h");
 }) else struct {};
 
-const signal_c = if (backend != .none) @cImport(@cInclude("signal.h")) else struct {};
+const signal_c = if (build_options.isocline) @cImport(@cInclude("signal.h")) else struct {};
 const libc = @cImport({
     @cInclude("stdlib.h");
     @cInclude("string.h");
@@ -93,7 +90,7 @@ fn isoclineWordCompleter(cenv: ?*isocline_c.ic_completion_env_t, word: [*c]const
 
     var buf: [256]u8 = undefined;
 
-    const commands = &[_][]const u8{ ":q", ":quit", ":clear", ":backend", ":h", ":help", ":doc", ":apropos", ":doctest" };
+    const commands = &[_][]const u8{ ":q", ":quit", ":clear", ":features", ":h", ":help", ":doc", ":apropos", ":doctest" };
     for (commands) |cmd| {
         if (std.mem.startsWith(u8, cmd, wslice)) {
             const cmd_c = std.fmt.bufPrintZ(&buf, "{s}", .{cmd}) catch continue;
@@ -194,29 +191,26 @@ fn isoclineHighlighter(henv: ?*isocline_c.ic_highlight_env_t, input: [*c]const u
 }
 
 fn readLine(init: std.process.Init) ![]u8 {
-    return switch (backend) {
-        .isocline => {
-            const line = isocline_c.ic_readline("rεvo ") orelse return error.EndOfStream;
-            if (line[0] != 0)
-                _ = isocline_c.ic_history_add(line);
-            const duped = try init.gpa.dupe(u8, std.mem.span(line));
-            isocline_c.ic_free(line);
-            return duped;
-        },
-        .none => {
-            var stdout_buffer: [8]u8 = undefined;
-            var stdout = std.Io.File.stdout().writer(init.io, &stdout_buffer);
-            stdout.interface.writeAll(">> ") catch {};
-            stdout.interface.flush() catch {};
+    if (build_options.isocline) {
+        const line = isocline_c.ic_readline("rεvo ") orelse return error.EndOfStream;
+        if (line[0] != 0)
+            _ = isocline_c.ic_history_add(line);
+        const duped = try init.gpa.dupe(u8, std.mem.span(line));
+        isocline_c.ic_free(line);
+        return duped;
+    } else {
+        var stdout_buffer: [8]u8 = undefined;
+        var stdout = std.Io.File.stdout().writer(init.io, &stdout_buffer);
+        stdout.interface.writeAll(">> ") catch {};
+        stdout.interface.flush() catch {};
 
-            var stdin_buffer: [1024]u8 = undefined;
-            var stdin_reader = std.Io.File.stdin().reader(init.io, &stdin_buffer);
-            var writer = std.Io.Writer.Allocating.init(init.gpa);
-            defer writer.deinit();
-            _ = try stdin_reader.interface.streamDelimiter(&writer.writer, '\n');
-            return try writer.toOwnedSlice();
-        },
-    };
+        var stdin_buffer: [1024]u8 = undefined;
+        var stdin_reader = std.Io.File.stdin().reader(init.io, &stdin_buffer);
+        var writer = std.Io.Writer.Allocating.init(init.gpa);
+        defer writer.deinit();
+        _ = try stdin_reader.interface.streamDelimiter(&writer.writer, '\n');
+        return try writer.toOwnedSlice();
+    }
 }
 
 var sigint_received: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
@@ -321,8 +315,8 @@ pub const Session = struct {
             return true;
         }
 
-        if (std.mem.eql(u8, line, ":backend")) {
-            try out.print("line editing: {s}\n", .{@tagName(backend)});
+        if (std.mem.eql(u8, line, ":features")) {
+            try out.print("isocline={any}, lsp={any}\n", .{ build_options.isocline, build_options.lsp_enabled });
             return true;
         }
 
@@ -448,18 +442,18 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
     const writer = &out.interface;
 
     try writer.print(
-        "revo {s} -- repl ({s} backend)\ntype :q to exit, :clear to reset session\n",
-        .{ build_options.version, @tagName(backend) },
+        "revo {s} repl -- type :q to exit, :clear to reset session\n",
+        .{build_options.version},
     );
     try writer.print("\x1b[0;95m# {s}\x1b[0m\n", .{
         splashText(splashSeed(vm, &banner_buffer, writer)),
     });
     try writer.flush();
 
-    const signal_was_set = backend != .none and OS != .wasi;
+    const signal_was_set = build_options.isocline and OS != .wasi;
     if (signal_was_set) _ = signal_c.signal(signal_c.SIGINT, @ptrCast(&sigintHandler));
 
-    if (backend == .isocline) {
+    if (build_options.isocline) {
         isocline_ctx = IsoclineContext{ .vm = vm, .gpa = gpa };
 
         var b: [512]u8 = undefined;
