@@ -1148,8 +1148,53 @@ pub fn walkExpr(
         } }),
         .match_expr => |v| walkMatch(allocator, expr.span, v, Transform, ctx),
         .table => |entries| walkTable(allocator, expr.span, entries, Transform, ctx),
-        // not good: range_literal, try_expr, orelse_expr, struct_def,
-        // test_block, test_suite, type_alias fall through here (bug)
+        .range_literal => |v| allocNode(allocator, expr.span, .{ .range_literal = .{
+            .start = try ctx.walk(allocator, v.start, ctx),
+            .step = try ctx.walk(allocator, v.step, ctx),
+            .end = try ctx.walk(allocator, v.end, ctx),
+        } }),
+        .try_expr => |v| allocNode(allocator, expr.span, .{
+            .try_expr = try ctx.walk(allocator, v, ctx),
+        }),
+        .orelse_expr => |v| allocNode(allocator, expr.span, .{ .orelse_expr = .{
+            .left = try ctx.walk(allocator, v.left, ctx),
+            .right = try ctx.walk(allocator, v.right, ctx),
+        } }),
+        .struct_def => |v| allocNode(allocator, expr.span, .{ .struct_def = .{
+            .name = v.name,
+            .items = blk: {
+                var out = try std.ArrayList(StructItem).initCapacity(allocator, v.items.len);
+
+                for (v.items) |item| switch (item) {
+                    .binding => |b| try out.append(allocator, .{ .binding = .{
+                        .target = try ctx.walk(allocator, b.target, ctx),
+                        .type_name = b.type_name,
+                        .value = try ctx.walk(allocator, b.value, ctx),
+                        .mutable = b.mutable,
+                    } }),
+                    .field => |f| try out.append(allocator, .{ .field = .{
+                        .name = f.name,
+                        .name_span = f.name_span,
+                        .type_name = f.type_name,
+                        .default_value = if (f.default_value) |dv| try ctx.walk(allocator, dv, ctx) else null,
+                    } }),
+                };
+                break :blk try out.toOwnedSlice(allocator);
+            },
+        } }),
+        .test_block => |v| allocNode(allocator, expr.span, .{ .test_block = .{
+            .name = v.name,
+            .body = try ctx.walk(allocator, v.body, ctx),
+            .skip = v.skip,
+        } }),
+        .test_suite => |v| allocNode(allocator, expr.span, .{ .test_suite = .{
+            .name = v.name,
+            .body = try ctx.walk(allocator, v.body, ctx),
+        } }),
+        .type_alias => |v| allocNode(allocator, expr.span, .{ .type_alias = .{
+            .name = v.name,
+            .type_expr = v.type_expr,
+        } }),
         else => expr,
     };
 }
