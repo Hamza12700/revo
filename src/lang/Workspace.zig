@@ -1410,10 +1410,10 @@ fn entryPtr(self: *Workspace, id: FileId) !*FileEntry {
 //
 
 fn sameOpts(a: lang.BuildOptions, b: lang.BuildOptions) bool {
-    return a.include_default_macros == b.include_default_macros and
-        a.install_debug_info == b.install_debug_info and
-        a.test_mode == b.test_mode and
-        a.mode == b.mode;
+    inline for (std.meta.fields(lang.BuildOptions)) |f| {
+        if (@field(a, f.name) != @field(b, f.name)) return false;
+    }
+    return true;
 }
 
 fn copyArtifact(alloc: std.mem.Allocator, artifact: lang.Artifact) !lang.Artifact {
