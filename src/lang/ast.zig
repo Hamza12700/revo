@@ -908,7 +908,10 @@ pub fn walkAST(comptime Visitor: type, visitor: *Visitor, node: *const Node) voi
                     ?*TypeExpr => if (value) |te| walkTypeExprWithVisitor(Visitor, visitor, te),
                     []MatchArm => for (value) |arm| {
                         if (@hasField(Visitor, "found") and visitor.found) return;
-                        for (arm.matchers) |matcher| visitor.visit(matcher.expr);
+                        for (arm.matchers) |matcher| switch (matcher) {
+                            .expr => |e| visitor.visit(e),
+                            .wildcard => {},
+                        };
                         if (@hasField(Visitor, "found") and visitor.found) return;
                         if (arm.guard) |guard| visitor.visit(guard);
                         if (@hasField(Visitor, "found") and visitor.found) return;
