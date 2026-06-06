@@ -225,7 +225,7 @@ pub fn parseSource(allocator: std.mem.Allocator, source: []const u8) !*Node {
 }
 
 pub fn parseSourceReport(allocator: std.mem.Allocator, source: []const u8) !parser.ParseResult {
-    const lexed = try lexer.lexReport(allocator, source);
+    const lexed = try Lexer.lexReport(allocator, source);
     const tokens = switch (lexed) {
         .ok => |items| items,
         .err => |failure| {
@@ -281,7 +281,7 @@ const Node = ast.Node;
 const compiler = lang.compiler;
 const expander = lang.expander;
 const proc = lang.proc;
-const lexer = lang.lexer;
+const Lexer = lang.Lexer;
 const parser = lang.parser;
 const diagnostic = lang.diagnostic;
 

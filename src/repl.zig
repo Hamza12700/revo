@@ -121,7 +121,7 @@ fn isoclineWordCompleter(cenv: ?*isocline_c.ic_completion_env_t, word: [*c]const
     }
 
     // ...then keywords
-    for (revo.lang.lexer.TokenType.of_string.keys()) |kw| {
+    for (revo.lang.Lexer.TokenType.of_string.keys()) |kw| {
         if (std.mem.startsWith(u8, kw, wslice)) {
             const kw_c = std.fmt.bufPrintZ(&buf, "{s}", .{kw}) catch continue;
             _ = isocline_c.ic_add_completion(cenv, kw_c);

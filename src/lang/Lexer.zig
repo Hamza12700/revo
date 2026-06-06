@@ -234,469 +234,469 @@ pub fn lexReport(allocator: std.mem.Allocator, source: []const u8) !LexResult {
 }
 
 // character-at-a-time, no backtracking
-const Lexer = struct {
-    source: []const u8,
-    alloc: std.mem.Allocator,
-    pos: usize = 0, // byte offset in source
-    line: u32 = 1,
-    column: u32 = 1,
-    line_start: bool = true, // at start of line (for indent-sensitive tokens)
-    pending_error_span: ?ast.Span = null, // saved for error recovery
+const Lexer = @This();
 
-    fn init(source: []const u8, alloc: std.mem.Allocator) Lexer {
-        return .{ .source = source, .alloc = alloc };
-    }
+source: []const u8,
+alloc: std.mem.Allocator,
+pos: usize = 0, // byte offset in source
+line: u32 = 1,
+column: u32 = 1,
+line_start: bool = true, // at start of line (for indent-sensitive tokens)
+pending_error_span: ?ast.Span = null, // saved for error recovery
 
-    fn next(self: *Lexer) !Token {
-        while (!self.atEnd()) {
-            const c = self.peek();
-            if (std.ascii.isWhitespace(c)) {
-                _ = self.advance();
-                continue;
-            }
-            if (c == '#') {
-                if (self.peekN(1) == '#') {
-                    try self.skipMultilineComment();
-                    continue;
-                }
-                while (!self.atEnd() and self.peek() != '\n') _ = self.advance();
-                continue;
-            }
-            break;
-        }
+fn init(source: []const u8, alloc: std.mem.Allocator) Lexer {
+    return .{ .source = source, .alloc = alloc };
+}
 
-        if (self.atEnd()) return self.makeToken(.eof, self.pos, self.pos, 0, 0);
-
-        const start = self.pos;
-        const line = self.line;
-        const column = self.column;
-        const c = self.advance();
-
-        return switch (c) {
-            '|' => if (self.matchChar('>'))
-                self.makeToken(.pipe_forward, start, self.pos, line, column)
-            else
-                self.makeToken(.pipe, start, self.pos, line, column),
-            '+' => if (self.matchChar('='))
-                self.makeToken(.plus_assign, start, self.pos, line, column)
-            else
-                self.makeToken(.plus, start, self.pos, line, column),
-            '-' => if (self.matchChar('='))
-                self.makeToken(.minus_assign, start, self.pos, line, column)
-            else if (self.matchChar('>'))
-                self.makeToken(.arrow, start, self.pos, line, column)
-            else if (std.ascii.isDigit(self.peek()))
-                self.lexNumber(start, line, column)
-            else
-                self.makeToken(.minus, start, self.pos, line, column),
-            '*' => if (self.matchChar('='))
-                self.makeToken(.star_assign, start, self.pos, line, column)
-            else
-                self.makeToken(.star, start, self.pos, line, column),
-            '/' => if (self.matchChar('='))
-                self.makeToken(.slash_assign, start, self.pos, line, column)
-            else
-                self.makeToken(.slash, start, self.pos, line, column),
-            '%' => if (self.matchChar('='))
-                self.makeToken(.percent_assign, start, self.pos, line, column)
-            else
-                self.makeToken(.percent, start, self.pos, line, column),
-            ':' => if (self.peekIsIdentStart())
-                self.lexHash(start, line, column)
-            else
-                self.makeToken(.colon, start, self.pos, line, column),
-            '=' => if (self.matchChar('='))
-                self.makeToken(.eq, start, self.pos, line, column)
-            else if (self.matchChar('>'))
-                self.makeToken(.fat_arrow, start, self.pos, line, column)
-            else
-                self.makeToken(.assign, start, self.pos, line, column),
-            '!' => if (self.matchChar('='))
-                self.makeToken(.neq, start, self.pos, line, column)
-            else
-                return error.UnexpectedCharacter,
-            '<' => if (self.matchChar('='))
-                self.makeToken(.lte, start, self.pos, line, column)
-            else
-                self.makeToken(.lt, start, self.pos, line, column),
-            '>' => if (self.matchChar('='))
-                self.makeToken(.gte, start, self.pos, line, column)
-            else
-                self.makeToken(.gt, start, self.pos, line, column),
-            '"' => if (self.matchTripleQuote())
-                self.lexMultilineString(start, line, column)
-            else
-                self.lexString(start, line, column),
-            '\'' => self.lexSingleLineString(start, line, column),
-            '`' => self.lexBacktickString(start, line, column),
-
-            '$' => return error.UnexpectedCharacter,
-            '@' => if (self.peekIsIdentStart())
-                self.lexAtIdent(start, line, column)
-            else
-                return error.UnexpectedCharacter,
-            '(' => self.makeToken(.lparen, start, self.pos, line, column),
-            ')' => self.makeToken(.rparen, start, self.pos, line, column),
-            '[' => self.makeToken(.lbracket, start, self.pos, line, column),
-            ']' => self.makeToken(.rbracket, start, self.pos, line, column),
-            '{' => self.makeToken(.lsquiggly, start, self.pos, line, column),
-            '}' => self.makeToken(.rsquiggly, start, self.pos, line, column),
-            ',' => self.makeToken(.comma, start, self.pos, line, column),
-            '.' => if (self.matchChar('.'))
-                self.makeToken(.dotdot, start, self.pos, line, column)
-            else
-                self.makeToken(.dot, start, self.pos, line, column),
-            '?' => self.makeToken(.huh, start, self.pos, line, column),
-            else => {
-                if (std.ascii.isDigit(c)) return self.lexNumber(start, line, column);
-                if (isIdentStart(c)) return self.lexIdent(start, line, column);
-                return error.UnexpectedCharacter;
-            },
-        };
-    }
-
-    fn lexFailure(self: *const Lexer, err: anyerror) LexError {
-        const span = self.pending_error_span orelse self.currentSpan();
-        return switch (err) {
-            error.UnexpectedCharacter => .{ .kind = .UnexpectedCharacter, .span = span, .message = "unexpected character" },
-            error.UnterminatedComment => .{ .kind = .UnterminatedComment, .span = span, .message = "unterminated multiline comment" },
-            error.UnterminatedString => .{ .kind = .UnterminatedString, .span = span, .message = "unterminated string" },
-            else => .{ .kind = .Unknown, .span = span, .message = "lexing failed" },
-        };
-    }
-
-    fn currentSpan(self: *const Lexer) ast.Span {
-        if (self.pos == 0) {
-            return .{ .start = 0, .end = 0, .line = self.line, .column = self.column };
-        }
-
-        const start = self.pos - 1;
-        return .{ .start = start, .end = self.pos, .line = self.line, .column = self.column -| 1 };
-    }
-
-    fn atEnd(self: *Lexer) bool {
-        return self.pos >= self.source.len;
-    }
-
-    fn peek(self: *Lexer) u8 {
-        return if (self.atEnd()) 0 else self.source[self.pos];
-    }
-
-    fn peekN(self: *Lexer, offset: usize) u8 {
-        const idx = self.pos + offset;
-        return if (idx >= self.source.len) 0 else self.source[idx];
-    }
-
-    fn advance(self: *Lexer) u8 {
-        const c = self.source[self.pos];
-        self.pos += 1;
-        if (c == '\n') {
-            self.line += 1;
-            self.column = 1;
-            self.line_start = true;
-        } else {
-            self.column += 1;
-            if (c != ' ' and c != '\t' and c != '\r') self.line_start = false;
-        }
-        return c;
-    }
-
-    fn matchChar(self: *Lexer, c: u8) bool {
-        if (self.peek() != c) return false;
-        _ = self.advance();
-        return true;
-    }
-
-    fn matchTripleQuote(self: *Lexer) bool {
-        if (self.peek() != '"' or self.peekN(1) != '"') return false;
-        _ = self.advance();
-        _ = self.advance();
-        return true;
-    }
-
-    fn skipMultilineComment(self: *Lexer) !void {
-        self.pending_error_span = .{
-            .start = self.pos,
-            .end = self.pos + 2,
-            .line = self.line,
-            .column = self.column,
-        };
-        _ = self.advance();
-        _ = self.advance();
-        while (!self.atEnd()) {
-            if (self.peek() == '#' and self.peekN(1) == '#') {
-                _ = self.advance();
-                _ = self.advance();
-                self.pending_error_span = null;
-                return;
-            }
+fn next(self: *Lexer) !Token {
+    while (!self.atEnd()) {
+        const c = self.peek();
+        if (std.ascii.isWhitespace(c)) {
             _ = self.advance();
+            continue;
         }
-        return error.UnterminatedComment;
+        if (c == '#') {
+            if (self.peekN(1) == '#') {
+                try self.skipMultilineComment();
+                continue;
+            }
+            while (!self.atEnd() and self.peek() != '\n') _ = self.advance();
+            continue;
+        }
+        break;
     }
 
-    fn lexHash(self: *Lexer, start: usize, line: u32, column: u32) !Token {
-        while (isIdentContinue(self.peek())) _ = self.advance();
-        return self.makeToken(.hash, start, self.pos, line, column);
+    if (self.atEnd()) return self.makeToken(.eof, self.pos, self.pos, 0, 0);
+
+    const start = self.pos;
+    const line = self.line;
+    const column = self.column;
+    const c = self.advance();
+
+    return switch (c) {
+        '|' => if (self.matchChar('>'))
+            self.makeToken(.pipe_forward, start, self.pos, line, column)
+        else
+            self.makeToken(.pipe, start, self.pos, line, column),
+        '+' => if (self.matchChar('='))
+            self.makeToken(.plus_assign, start, self.pos, line, column)
+        else
+            self.makeToken(.plus, start, self.pos, line, column),
+        '-' => if (self.matchChar('='))
+            self.makeToken(.minus_assign, start, self.pos, line, column)
+        else if (self.matchChar('>'))
+            self.makeToken(.arrow, start, self.pos, line, column)
+        else if (std.ascii.isDigit(self.peek()))
+            self.lexNumber(start, line, column)
+        else
+            self.makeToken(.minus, start, self.pos, line, column),
+        '*' => if (self.matchChar('='))
+            self.makeToken(.star_assign, start, self.pos, line, column)
+        else
+            self.makeToken(.star, start, self.pos, line, column),
+        '/' => if (self.matchChar('='))
+            self.makeToken(.slash_assign, start, self.pos, line, column)
+        else
+            self.makeToken(.slash, start, self.pos, line, column),
+        '%' => if (self.matchChar('='))
+            self.makeToken(.percent_assign, start, self.pos, line, column)
+        else
+            self.makeToken(.percent, start, self.pos, line, column),
+        ':' => if (self.peekIsIdentStart())
+            self.lexHash(start, line, column)
+        else
+            self.makeToken(.colon, start, self.pos, line, column),
+        '=' => if (self.matchChar('='))
+            self.makeToken(.eq, start, self.pos, line, column)
+        else if (self.matchChar('>'))
+            self.makeToken(.fat_arrow, start, self.pos, line, column)
+        else
+            self.makeToken(.assign, start, self.pos, line, column),
+        '!' => if (self.matchChar('='))
+            self.makeToken(.neq, start, self.pos, line, column)
+        else
+            return error.UnexpectedCharacter,
+        '<' => if (self.matchChar('='))
+            self.makeToken(.lte, start, self.pos, line, column)
+        else
+            self.makeToken(.lt, start, self.pos, line, column),
+        '>' => if (self.matchChar('='))
+            self.makeToken(.gte, start, self.pos, line, column)
+        else
+            self.makeToken(.gt, start, self.pos, line, column),
+        '"' => if (self.matchTripleQuote())
+            self.lexMultilineString(start, line, column)
+        else
+            self.lexString(start, line, column),
+        '\'' => self.lexSingleLineString(start, line, column),
+        '`' => self.lexBacktickString(start, line, column),
+
+        '$' => return error.UnexpectedCharacter,
+        '@' => if (self.peekIsIdentStart())
+            self.lexAtIdent(start, line, column)
+        else
+            return error.UnexpectedCharacter,
+        '(' => self.makeToken(.lparen, start, self.pos, line, column),
+        ')' => self.makeToken(.rparen, start, self.pos, line, column),
+        '[' => self.makeToken(.lbracket, start, self.pos, line, column),
+        ']' => self.makeToken(.rbracket, start, self.pos, line, column),
+        '{' => self.makeToken(.lsquiggly, start, self.pos, line, column),
+        '}' => self.makeToken(.rsquiggly, start, self.pos, line, column),
+        ',' => self.makeToken(.comma, start, self.pos, line, column),
+        '.' => if (self.matchChar('.'))
+            self.makeToken(.dotdot, start, self.pos, line, column)
+        else
+            self.makeToken(.dot, start, self.pos, line, column),
+        '?' => self.makeToken(.huh, start, self.pos, line, column),
+        else => {
+            if (std.ascii.isDigit(c)) return self.lexNumber(start, line, column);
+            if (isIdentStart(c)) return self.lexIdent(start, line, column);
+            return error.UnexpectedCharacter;
+        },
+    };
+}
+
+fn lexFailure(self: *const Lexer, err: anyerror) LexError {
+    const span = self.pending_error_span orelse self.currentSpan();
+    return switch (err) {
+        error.UnexpectedCharacter => .{ .kind = .UnexpectedCharacter, .span = span, .message = "unexpected character" },
+        error.UnterminatedComment => .{ .kind = .UnterminatedComment, .span = span, .message = "unterminated multiline comment" },
+        error.UnterminatedString => .{ .kind = .UnterminatedString, .span = span, .message = "unterminated string" },
+        else => .{ .kind = .Unknown, .span = span, .message = "lexing failed" },
+    };
+}
+
+fn currentSpan(self: *const Lexer) ast.Span {
+    if (self.pos == 0) {
+        return .{ .start = 0, .end = 0, .line = self.line, .column = self.column };
     }
 
-    fn lexNumber(self: *Lexer, start: usize, line: u32, column: u32) Token {
+    const start = self.pos - 1;
+    return .{ .start = start, .end = self.pos, .line = self.line, .column = self.column -| 1 };
+}
+
+fn atEnd(self: *Lexer) bool {
+    return self.pos >= self.source.len;
+}
+
+fn peek(self: *Lexer) u8 {
+    return if (self.atEnd()) 0 else self.source[self.pos];
+}
+
+fn peekN(self: *Lexer, offset: usize) u8 {
+    const idx = self.pos + offset;
+    return if (idx >= self.source.len) 0 else self.source[idx];
+}
+
+fn advance(self: *Lexer) u8 {
+    const c = self.source[self.pos];
+    self.pos += 1;
+    if (c == '\n') {
+        self.line += 1;
+        self.column = 1;
+        self.line_start = true;
+    } else {
+        self.column += 1;
+        if (c != ' ' and c != '\t' and c != '\r') self.line_start = false;
+    }
+    return c;
+}
+
+fn matchChar(self: *Lexer, c: u8) bool {
+    if (self.peek() != c) return false;
+    _ = self.advance();
+    return true;
+}
+
+fn matchTripleQuote(self: *Lexer) bool {
+    if (self.peek() != '"' or self.peekN(1) != '"') return false;
+    _ = self.advance();
+    _ = self.advance();
+    return true;
+}
+
+fn skipMultilineComment(self: *Lexer) !void {
+    self.pending_error_span = .{
+        .start = self.pos,
+        .end = self.pos + 2,
+        .line = self.line,
+        .column = self.column,
+    };
+    _ = self.advance();
+    _ = self.advance();
+    while (!self.atEnd()) {
+        if (self.peek() == '#' and self.peekN(1) == '#') {
+            _ = self.advance();
+            _ = self.advance();
+            self.pending_error_span = null;
+            return;
+        }
+        _ = self.advance();
+    }
+    return error.UnterminatedComment;
+}
+
+fn lexHash(self: *Lexer, start: usize, line: u32, column: u32) !Token {
+    while (isIdentContinue(self.peek())) _ = self.advance();
+    return self.makeToken(.hash, start, self.pos, line, column);
+}
+
+fn lexNumber(self: *Lexer, start: usize, line: u32, column: u32) Token {
+    while (std.ascii.isDigit(self.peek())) _ = self.advance();
+    if (self.peek() == '.' and self.peekN(1) != '.' and std.ascii.isDigit(self.peekN(1))) {
+        _ = self.advance();
         while (std.ascii.isDigit(self.peek())) _ = self.advance();
-        if (self.peek() == '.' and self.peekN(1) != '.' and std.ascii.isDigit(self.peekN(1))) {
+    }
+    if (isIdentContinue(self.peek())) _ = self.advance();
+    return self.makeToken(.number, start, self.pos, line, column);
+}
+
+fn lexString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
+    self.pending_error_span = .{ .start = start, .end = start + 1, .line = line, .column = column };
+    var buf = try std.ArrayList(u8).initCapacity(self.alloc, 16);
+    defer buf.deinit(self.alloc);
+    while (!self.atEnd()) {
+        const c = self.advance();
+        if (c == '\\') {
+            if (self.atEnd()) return error.UnterminatedString;
+            const escaped = self.advance();
+            const replacement: u8 = switch (escaped) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                '"' => '"',
+                '\'' => '\'',
+                else => {
+                    try buf.append(self.alloc, '\\');
+                    try buf.append(self.alloc, escaped);
+                    continue;
+                },
+            };
+            try buf.append(self.alloc, replacement);
+            continue;
+        }
+        if (c == '"') {
+            self.pending_error_span = null;
+            const text = try buf.toOwnedSlice(self.alloc);
+            errdefer self.alloc.free(text);
+            return .{
+                .type = .string,
+                .text = text,
+                .line = line,
+                .column = column,
+                .start = start,
+                .end = self.pos,
+            };
+        }
+        try buf.append(self.alloc, c);
+    }
+    return error.UnterminatedString;
+}
+
+fn lexSingleLineString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
+    self.pending_error_span = .{
+        .start = start,
+        .end = start + 1,
+        .line = line,
+        .column = column,
+    };
+    var buf = try std.ArrayList(u8).initCapacity(self.alloc, 16);
+    defer buf.deinit(self.alloc);
+    while (!self.atEnd()) {
+        const c = self.advance();
+        if (c == '\n') {
+            const text = try buf.toOwnedSlice(self.alloc);
+            self.pending_error_span = null;
+            return .{
+                .type = .string,
+                .text = text,
+                .line = line,
+                .column = column,
+                .start = start,
+                .end = self.pos - 1,
+            };
+        }
+        if (c == '\'') {
+            const text = try buf.toOwnedSlice(self.alloc);
+            self.pending_error_span = null;
+            return .{
+                .type = .string,
+                .text = text,
+                .line = line,
+                .column = column,
+                .start = start,
+                .end = self.pos,
+            };
+        }
+        try buf.append(self.alloc, c);
+    }
+    return error.UnterminatedString;
+}
+
+fn lexMultilineString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
+    self.pending_error_span = .{ .start = start, .end = start + 3, .line = line, .column = column };
+    var buf = try std.ArrayList(u8).initCapacity(self.alloc, 64);
+    defer buf.deinit(self.alloc);
+    while (!self.atEnd()) {
+        if (self.peek() == '"' and self.peekN(1) == '"' and self.peekN(2) == '"') {
             _ = self.advance();
-            while (std.ascii.isDigit(self.peek())) _ = self.advance();
+            _ = self.advance();
+            _ = self.advance();
+            const raw = try buf.toOwnedSlice(self.alloc);
+            self.pending_error_span = null;
+            const text = try dedentMultiline(self.alloc, raw);
+            self.alloc.free(raw);
+            return .{
+                .type = .multiline_string,
+                .text = text,
+                .line = line,
+                .column = column,
+                .start = start,
+                .end = self.pos,
+            };
         }
-        if (isIdentContinue(self.peek())) _ = self.advance();
-        return self.makeToken(.number, start, self.pos, line, column);
+        try buf.append(self.alloc, self.advance());
     }
+    return error.UnterminatedString;
+}
 
-    fn lexString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
-        self.pending_error_span = .{ .start = start, .end = start + 1, .line = line, .column = column };
-        var buf = try std.ArrayList(u8).initCapacity(self.alloc, 16);
-        defer buf.deinit(self.alloc);
-        while (!self.atEnd()) {
-            const c = self.advance();
-            if (c == '\\') {
-                if (self.atEnd()) return error.UnterminatedString;
-                const escaped = self.advance();
-                const replacement: u8 = switch (escaped) {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '"' => '"',
-                    '\'' => '\'',
-                    else => {
-                        try buf.append(self.alloc, '\\');
-                        try buf.append(self.alloc, escaped);
-                        continue;
-                    },
-                };
-                try buf.append(self.alloc, replacement);
-                continue;
-            }
-            if (c == '"') {
-                self.pending_error_span = null;
-                const text = try buf.toOwnedSlice(self.alloc);
-                errdefer self.alloc.free(text);
-                return .{
-                    .type = .string,
-                    .text = text,
-                    .line = line,
-                    .column = column,
-                    .start = start,
-                    .end = self.pos,
-                };
-            }
-            try buf.append(self.alloc, c);
-        }
-        return error.UnterminatedString;
-    }
+fn dedentMultiline(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
+    if (text.len == 0 or text[0] != '\n') return alloc.dupe(u8, text);
 
-    fn lexSingleLineString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
-        self.pending_error_span = .{
-            .start = start,
-            .end = start + 1,
-            .line = line,
-            .column = column,
-        };
-        var buf = try std.ArrayList(u8).initCapacity(self.alloc, 16);
-        defer buf.deinit(self.alloc);
-        while (!self.atEnd()) {
-            const c = self.advance();
-            if (c == '\n') {
-                const text = try buf.toOwnedSlice(self.alloc);
-                self.pending_error_span = null;
-                return .{
-                    .type = .string,
-                    .text = text,
-                    .line = line,
-                    .column = column,
-                    .start = start,
-                    .end = self.pos - 1,
-                };
-            }
-            if (c == '\'') {
-                const text = try buf.toOwnedSlice(self.alloc);
-                self.pending_error_span = null;
-                return .{
-                    .type = .string,
-                    .text = text,
-                    .line = line,
-                    .column = column,
-                    .start = start,
-                    .end = self.pos,
-                };
-            }
-            try buf.append(self.alloc, c);
-        }
-        return error.UnterminatedString;
-    }
+    const body = text[1..];
+    var lines = try std.ArrayList([]const u8).initCapacity(alloc, 8);
+    defer lines.deinit(alloc);
 
-    fn lexMultilineString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
-        self.pending_error_span = .{ .start = start, .end = start + 3, .line = line, .column = column };
-        var buf = try std.ArrayList(u8).initCapacity(self.alloc, 64);
-        defer buf.deinit(self.alloc);
-        while (!self.atEnd()) {
-            if (self.peek() == '"' and self.peekN(1) == '"' and self.peekN(2) == '"') {
-                _ = self.advance();
-                _ = self.advance();
-                _ = self.advance();
-                const raw = try buf.toOwnedSlice(self.alloc);
-                self.pending_error_span = null;
-                const text = try dedentMultiline(self.alloc, raw);
-                self.alloc.free(raw);
-                return .{
-                    .type = .multiline_string,
-                    .text = text,
-                    .line = line,
-                    .column = column,
-                    .start = start,
-                    .end = self.pos,
-                };
-            }
-            try buf.append(self.alloc, self.advance());
-        }
-        return error.UnterminatedString;
-    }
-
-    fn dedentMultiline(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
-        if (text.len == 0 or text[0] != '\n') return alloc.dupe(u8, text);
-
-        const body = text[1..];
-        var lines = try std.ArrayList([]const u8).initCapacity(alloc, 8);
-        defer lines.deinit(alloc);
-
-        var min_indent: ?usize = null;
-        var iter = std.mem.splitScalar(u8, body, '\n');
-        while (iter.next()) |line| {
-            try lines.append(alloc, line);
-            if (line.len > 0) {
-                var count: usize = 0;
-                for (line) |ch| {
-                    if (ch == ' ' or ch == '\t') {
-                        count += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if (min_indent) |m| {
-                    if (count < m) min_indent = count;
+    var min_indent: ?usize = null;
+    var iter = std.mem.splitScalar(u8, body, '\n');
+    while (iter.next()) |line| {
+        try lines.append(alloc, line);
+        if (line.len > 0) {
+            var count: usize = 0;
+            for (line) |ch| {
+                if (ch == ' ' or ch == '\t') {
+                    count += 1;
                 } else {
-                    min_indent = count;
+                    break;
                 }
             }
-        }
-
-        const strip = min_indent orelse 0;
-        // dedent each line in place
-        for (lines.items) |*line| {
-            if (line.len > strip) {
-                line.* = line.*[strip..];
+            if (min_indent) |m| {
+                if (count < m) min_indent = count;
             } else {
-                line.* = "";
+                min_indent = count;
             }
         }
-        // strip trailing empty lines again after dedent
-        while (lines.items.len > 0 and lines.items[lines.items.len - 1].len == 0) {
-            _ = lines.pop();
+    }
+
+    const strip = min_indent orelse 0;
+    // dedent each line in place
+    for (lines.items) |*line| {
+        if (line.len > strip) {
+            line.* = line.*[strip..];
+        } else {
+            line.* = "";
         }
+    }
+    // strip trailing empty lines again after dedent
+    while (lines.items.len > 0 and lines.items[lines.items.len - 1].len == 0) {
+        _ = lines.pop();
+    }
 
-        var buf = try std.ArrayList(u8).initCapacity(alloc, 64);
-        errdefer buf.deinit(alloc);
+    var buf = try std.ArrayList(u8).initCapacity(alloc, 64);
+    errdefer buf.deinit(alloc);
 
-        for (lines.items, 0..) |line, i| {
-            if (i > 0) try buf.append(alloc, '\n');
-            try buf.appendSlice(alloc, line);
+    for (lines.items, 0..) |line, i| {
+        if (i > 0) try buf.append(alloc, '\n');
+        try buf.appendSlice(alloc, line);
+    }
+
+    return buf.toOwnedSlice(alloc);
+}
+
+fn lexBacktickString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
+    self.pending_error_span = .{ .start = start, .end = start + 1, .line = line, .column = column };
+    var buf = try std.ArrayList(u8).initCapacity(self.alloc, 16);
+    defer buf.deinit(self.alloc);
+    while (!self.atEnd()) {
+        const c = self.advance();
+        if (c == '\\') {
+            if (self.atEnd()) return error.UnterminatedString;
+            const escaped = self.advance();
+            const replacement: u8 = switch (escaped) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                '`' => '`',
+                else => {
+                    try buf.append(self.alloc, '\\');
+                    try buf.append(self.alloc, escaped);
+                    continue;
+                },
+            };
+            try buf.append(self.alloc, replacement);
+            continue;
         }
-
-        return buf.toOwnedSlice(alloc);
-    }
-
-    fn lexBacktickString(self: *Lexer, start: usize, line: u32, column: u32) !Token {
-        self.pending_error_span = .{ .start = start, .end = start + 1, .line = line, .column = column };
-        var buf = try std.ArrayList(u8).initCapacity(self.alloc, 16);
-        defer buf.deinit(self.alloc);
-        while (!self.atEnd()) {
-            const c = self.advance();
-            if (c == '\\') {
-                if (self.atEnd()) return error.UnterminatedString;
-                const escaped = self.advance();
-                const replacement: u8 = switch (escaped) {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '`' => '`',
-                    else => {
-                        try buf.append(self.alloc, '\\');
-                        try buf.append(self.alloc, escaped);
-                        continue;
-                    },
-                };
-                try buf.append(self.alloc, replacement);
-                continue;
-            }
-            if (c == '`') {
-                const text = try buf.toOwnedSlice(self.alloc);
-                errdefer self.alloc.free(text);
-                self.pending_error_span = null;
-                return .{
-                    .type = .backtick_string,
-                    .text = text,
-                    .line = line,
-                    .column = column,
-                    .start = start,
-                    .end = self.pos,
-                };
-            }
-            try buf.append(self.alloc, c);
+        if (c == '`') {
+            const text = try buf.toOwnedSlice(self.alloc);
+            errdefer self.alloc.free(text);
+            self.pending_error_span = null;
+            return .{
+                .type = .backtick_string,
+                .text = text,
+                .line = line,
+                .column = column,
+                .start = start,
+                .end = self.pos,
+            };
         }
-        return error.UnterminatedString;
+        try buf.append(self.alloc, c);
     }
+    return error.UnterminatedString;
+}
 
-    fn lexIdent(self: *Lexer, start: usize, line: u32, column: u32) Token {
-        while (isIdentContinue(self.peek())) _ = self.advance();
-        const text = self.source[start..self.pos];
-        const kind = TokenType.of_string.get(text) orelse .ident;
-        return .{
-            .type = kind,
-            .text = text,
-            .line = line,
-            .column = column,
-            .start = start,
-            .end = self.pos,
-        };
-    }
+fn lexIdent(self: *Lexer, start: usize, line: u32, column: u32) Token {
+    while (isIdentContinue(self.peek())) _ = self.advance();
+    const text = self.source[start..self.pos];
+    const kind = TokenType.of_string.get(text) orelse .ident;
+    return .{
+        .type = kind,
+        .text = text,
+        .line = line,
+        .column = column,
+        .start = start,
+        .end = self.pos,
+    };
+}
 
-    fn lexAtIdent(self: *Lexer, start: usize, line: u32, column: u32) Token {
-        while (isIdentContinue(self.peek())) _ = self.advance();
-        const text = self.source[start..self.pos];
-        return .{
-            .type = .ident,
-            .text = text,
-            .line = line,
-            .column = column,
-            .start = start,
-            .end = self.pos,
-        };
-    }
+fn lexAtIdent(self: *Lexer, start: usize, line: u32, column: u32) Token {
+    while (isIdentContinue(self.peek())) _ = self.advance();
+    const text = self.source[start..self.pos];
+    return .{
+        .type = .ident,
+        .text = text,
+        .line = line,
+        .column = column,
+        .start = start,
+        .end = self.pos,
+    };
+}
 
-    fn makeToken(self: *Lexer, kind: TokenType, start: usize, end: usize, line: u32, column: u32) Token {
-        return .{
-            .type = kind,
-            .text = self.source[start..end],
-            .line = line,
-            .column = column,
-            .start = start,
-            .end = end,
-        };
-    }
+fn makeToken(self: *Lexer, kind: TokenType, start: usize, end: usize, line: u32, column: u32) Token {
+    return .{
+        .type = kind,
+        .text = self.source[start..end],
+        .line = line,
+        .column = column,
+        .start = start,
+        .end = end,
+    };
+}
 
-    fn peekIsIdentStart(self: *Lexer) bool {
-        return isIdentStart(self.peek());
-    }
-};
+fn peekIsIdentStart(self: *Lexer) bool {
+    return isIdentStart(self.peek());
+}
 
 pub fn isIdentStart(c: u8) bool {
     return std.ascii.isAlphabetic(c) or c == '_';

@@ -6,7 +6,7 @@ const Expr = ast.Expr;
 const Node = ast.Node;
 const Span = ast.Span;
 const testing_helpers = @import("testing.zig");
-const lexer = lang.lexer;
+const lexer = lang.Lexer;
 const Token = lexer.Token;
 const TokenType = lexer.TokenType;
 

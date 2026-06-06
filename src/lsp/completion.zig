@@ -3,10 +3,10 @@ const lsp = @import("lsp");
 const revo = @import("revo");
 
 const T = lsp.types;
-const lexer = revo.lang.lexer;
+const Lexer = revo.lang.Lexer;
 const Workspace = revo.lang.Workspace;
 
-const keywords = lexer.TokenType.of_string.keys();
+const keywords = Lexer.TokenType.of_string.keys();
 
 /// complete identifiers at cursor position in `text`
 pub fn completions(
@@ -19,13 +19,13 @@ pub fn completions(
 ) !T.completion.Result {
     // scan backward from cursor to find prefix start
     var start = cursor_off;
-    while (start > 0 and lexer.isIdentContinue(text[start - 1])) start -= 1;
+    while (start > 0 and Lexer.isIdentContinue(text[start - 1])) start -= 1;
     const prefix = text[start..cursor_off];
 
     // check for '.' before the prefix (field completion)
     const dot_target = if (start > 0 and text[start - 1] == '.') blk: {
         var dot_start = start - 1;
-        while (dot_start > 0 and lexer.isIdentContinue(text[dot_start - 1])) dot_start -= 1;
+        while (dot_start > 0 and Lexer.isIdentContinue(text[dot_start - 1])) dot_start -= 1;
         break :blk text[dot_start .. start - 1];
     } else null;
 

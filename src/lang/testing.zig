@@ -19,11 +19,11 @@ pub fn expectPrinted(source: []const u8, expected: []const u8) !void {
 }
 
 pub fn expectTypes(source: []const u8, expected: []const lang.TokenType) !void {
-    try lang.lexer.testing.expectTypes(source, expected);
+    try lang.Lexer.testing.expectTypes(source, expected);
 }
 
-pub fn expectTokens(source: []const u8, expected: []const lang.lexer.testing.ExpectedToken) !void {
-    try lang.lexer.testing.expectTokens(source, expected);
+pub fn expectTokens(source: []const u8, expected: []const lang.Lexer.testing.ExpectedToken) !void {
+    try lang.Lexer.testing.expectTokens(source, expected);
 }
 
 const TopResult = struct {
