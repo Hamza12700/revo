@@ -764,10 +764,10 @@ pub fn references(
     var out = try std.ArrayList(Location).initCapacity(alloc, 4);
     errdefer out.deinit(alloc);
 
-    try self.collectReferencesInFile(alloc, id, name, &out, opts);
+    self.collectReferencesInFile(alloc, id, name, &out, opts);
     const deps_it = try self.dependencyClosure(alloc, id);
     defer alloc.free(deps_it);
-    for (deps_it) |dep| try self.collectReferencesInFile(alloc, dep, name, &out, opts);
+    for (deps_it) |dep| self.collectReferencesInFile(alloc, dep, name, &out, opts);
     return out.toOwnedSlice(alloc);
 }
 
@@ -1293,7 +1293,7 @@ fn collectDepsFromParsed(self: *Workspace, snap: Snapshot, root: *lang.Node) ![]
     return out.toOwnedSlice(self.alloc);
 }
 
-/// find all occurrences of `name` in a file (text search)
+/// walk AST for `.ident` nodes matching `name`
 fn collectReferencesInFile(
     self: *Workspace,
     alloc: std.mem.Allocator,
@@ -1301,21 +1301,53 @@ fn collectReferencesInFile(
     name: []const u8,
     out: *std.ArrayList(Location),
     opts: lang.BuildOptions,
-) !void {
+) void {
     const snap = self.snapshot(id) orelse return;
     _ = opts;
-    var pos: usize = 0;
-    while (wordIndexOf(snap.text, name, pos)) |idx| {
-        const start = offsetToPosition(snap.text, idx);
-        const end = offsetToPosition(snap.text, idx + name.len);
-        try out.append(alloc, .{
-            .file_id = id,
-            .name = snap.name,
-            .range = .{ .start = start, .end = end },
-        });
-        pos = idx + name.len;
-    }
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const arena_alloc = arena.allocator();
+
+    const parsed = lang.parseSourceReport(arena_alloc, snap.text) catch return;
+    const root = switch (parsed) {
+        .ok => |r| r,
+        .err => return,
+    };
+
+    var collector = IdentCollector{
+        .name = name,
+        .out = out,
+        .alloc = alloc,
+        .file_id = id,
+        .snap_name = snap.name,
+        .text = snap.text,
+    };
+    collector.visit(root);
 }
+
+const IdentCollector = struct {
+    name: []const u8,
+    out: *std.ArrayList(Location),
+    alloc: std.mem.Allocator,
+    file_id: FileId,
+    snap_name: []const u8,
+    text: []const u8,
+
+    pub fn visit(self: *@This(), node: *const lang.Node) void {
+        if (node.expr == .ident) {
+            if (std.mem.eql(u8, node.expr.ident, self.name)) {
+                const start = offsetToPosition(self.text, node.span.start);
+                const end = offsetToPosition(self.text, node.span.end);
+                self.out.append(self.alloc, .{
+                    .file_id = self.file_id,
+                    .name = self.snap_name,
+                    .range = .{ .start = start, .end = end },
+                }) catch {};
+            }
+        }
+        lang.ast.walkAST(@This(), self, node);
+    }
+};
 
 /// find the best (closest but before cursor) definition of `name`
 fn bestLocation(
@@ -1538,18 +1570,6 @@ fn wordAtPosition(text: []const u8, pos: Position) ?[]const u8 {
     while (end < text.len and isWordChar(text[end])) end += 1;
     if (end <= start) return null;
     return text[start..end];
-}
-
-fn wordIndexOf(text: []const u8, name: []const u8, start: usize) ?usize {
-    if (name.len == 0) return null;
-    var idx = start;
-    while (idx + name.len <= text.len) : (idx += 1) {
-        if (!std.mem.eql(u8, text[idx .. idx + name.len], name)) continue;
-        const before_ok = idx == 0 or !isWordChar(text[idx - 1]);
-        const after_ok = idx + name.len == text.len or !isWordChar(text[idx + name.len]);
-        if (before_ok and after_ok) return idx;
-    }
-    return null;
 }
 
 fn positionToOffset(text: []const u8, pos: Position) ?usize {
