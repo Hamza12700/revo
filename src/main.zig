@@ -454,26 +454,29 @@ fn benchArtifact(
     var times = try std.ArrayList(std.Io.Duration).initCapacity(gpa, iters);
     defer times.deinit(gpa);
 
+    var last_result: ?revo.EvalResult = null;
+
     for (0..iters) |_| {
         const t_start = std.Io.Timestamp.now(init.io, .cpu_process);
         const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
         const t_end = std.Io.Timestamp.now(init.io, .cpu_process);
         times.appendAssumeCapacity(t_start.durationTo(t_end));
+        last_result = run_result;
 
         if (run_result == .err) {
-            const failure = run_result.err;
-            printRuntimeFailure(init, failure, source);
+            printRuntimeFailure(init, run_result.err, source);
             vm.runtime.resetDiagArena();
         }
     }
 
-    const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
-    switch (run_result) {
-        .ok => if (echo_last) try printResult(vm),
-        .err => |failure| {
-            printRuntimeFailure(init, failure, source);
-            vm.runtime.resetDiagArena();
-        },
+    if (echo_last) {
+        if (last_result) |result| switch (result) {
+            .ok => try printResult(vm),
+            .err => |failure| {
+                printRuntimeFailure(init, failure, source);
+                vm.runtime.resetDiagArena();
+            },
+        };
     }
 
     revo.vm.debug.printBenchStats(times.items);
