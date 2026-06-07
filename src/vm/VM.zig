@@ -1720,10 +1720,10 @@ pub fn returnRegister(
     fiber.program = frame.program;
 
     // check if returning to exit frame
-    // only one frame left after pop
+    // 0 or 1 frames left after pop means we're exiting (or at) module level
     const returning_to_exit =
         self.sched.current_fiber == 0 and
-        fiber.frames.items.len == 1;
+        fiber.frames.items.len <= 1;
 
     // toplevel :err tuple should panic
     if (returning_to_exit) {

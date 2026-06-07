@@ -255,30 +255,16 @@ fn compileAssignSimple(
                 .struct_type => |type_name| {
                     const type_id = self.vm.struct_types.findTypeByName(type_name) orelse {
                         // fallback to table set if struct not found
-                        try self.compile(field.object, true);
-                        try compileAssignIntoTableAtom(
-                            self,
-                            try self.vm.internAtom(field.name),
-                            value,
-                        );
-                        try addFieldToLocalTableFields(self, field.object, field.name);
+                        try compileFieldAssign(self, field.object, field.name, value);
                         return;
                     };
                     const desc = self.vm.struct_types.getType(type_id) orelse {
-                        try self.compile(field.object, true);
-                        try compileAssignIntoTableAtom(
-                            self,
-                            try self.vm.internAtom(field.name),
-                            value,
-                        );
-                        try addFieldToLocalTableFields(self, field.object, field.name);
+                        try compileFieldAssign(self, field.object, field.name, value);
                         return;
                     };
                     const field_atom = try self.vm.internAtom(field.name);
                     const field_offset = desc.fieldIndex(field_atom) orelse {
-                        try self.compile(field.object, true);
-                        try compileAssignIntoTableAtom(self, field_atom, value);
-                        try addFieldToLocalTableFields(self, field.object, field.name);
+                        try compileFieldAssign(self, field.object, field.name, value);
                         return;
                     };
 
@@ -288,13 +274,13 @@ fn compileAssignSimple(
                     try self.regRelease();
                 },
                 else => {
-                    // table field access
+                    // table field access: set field, return value as expression result
+                    const key_atom = try self.vm.internAtom(field.name);
                     try self.compile(field.object, true);
-                    try compileAssignIntoTableAtom(
-                        self,
-                        try self.vm.internAtom(field.name),
-                        value,
-                    );
+                    try self.regDupe();
+                    try self.compile(value, true);
+                    try self.emit(.table_set_atom, key_atom);
+                    try self.emit(.table_get_atom, key_atom);
                     try addFieldToLocalTableFields(self, field.object, field.name);
                 },
             }
@@ -302,11 +288,11 @@ fn compileAssignSimple(
         .index => |index| {
             try self.compile(index.object, true);
             if (index.key.expr == .hash) {
-                try compileAssignIntoTableAtom(
-                    self,
-                    try self.vm.internAtom(index.key.expr.hash),
-                    value,
-                );
+                const key_atom = try self.vm.internAtom(index.key.expr.hash);
+                try self.regDupe();
+                try self.compile(value, true);
+                try self.emit(.table_set_atom, key_atom);
+                try self.emit(.table_get_atom, key_atom);
                 try addFieldToLocalTableFields(self, index.object, index.key.expr.hash);
             } else {
                 try self.compile(index.key, true);
@@ -398,6 +384,21 @@ fn compileAssignIntoTableAtom(
     try self.compile(value, true);
     try self.emit(.table_set_atom, key_atom);
     try self.regRelease();
+}
+
+fn compileFieldAssign(
+    self: *Compiler,
+    field_obj: *const Node,
+    field_name: []const u8,
+    value: *const Node,
+) !void {
+    const key_atom = try self.vm.internAtom(field_name);
+    try self.compile(field_obj, true);
+    try self.regDupe();
+    try self.compile(value, true);
+    try self.emit(.table_set_atom, key_atom);
+    try self.emit(.table_get_atom, key_atom);
+    try addFieldToLocalTableFields(self, field_obj, field_name);
 }
 
 pub fn compileStruct(
