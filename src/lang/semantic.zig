@@ -674,13 +674,13 @@ const SemanticChecker = struct {
                 const actual_type = try self.analyzeNode(idx.object);
                 if (!types_mod.canCoerce(.{ .struct_type = "table" }, actual_type)) {
                     const name_str = try types_mod.formatType(self.alloc, actual_type);
-                    try self.appendTypeMismatch(
+                    defer self.alloc.free(name_str);
+
+                    try self.appendError(
+                        try std.fmt.allocPrint(self.alloc, "mutation is not allowed for {s}", .{name_str}),
                         idx.object.span,
-                        name_str,
-                        "table",
-                        actual_type,
+                        "here",
                     );
-                    self.alloc.free(name_str);
                 }
             },
             else => {},

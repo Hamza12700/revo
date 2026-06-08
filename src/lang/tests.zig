@@ -1301,7 +1301,7 @@ test "semantic catches undefined variable" {
 }
 
 test "semantic catches trying to mutate a tuple variable" {
-    try t.expectCompileError("tup = (0,0) tup[0] = 1", .ParseError);
+    try t.expectCompileError("let tup = (0,0) tup[0] = 1", .ParseError);
 }
 
 test "semantic catches trying to mutate a tuple literal" {
