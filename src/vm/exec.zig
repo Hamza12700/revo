@@ -143,26 +143,20 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const val = regRead(regs, base, instr.b);
             regWrite(regs, base, instr.a, val);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_const => {
             std.debug.assert(instr.bx < self.constants.items.len);
             regWrite(regs, base, instr.a, self.constants.items[instr.bx]);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_nil => {
             regWrite(regs, base, instr.a, revo.core_atoms.data(.nil));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_small_int => {
@@ -173,9 +167,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 Data.new.num(@as(i64, @intCast(instr.bx))),
             );
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .add => {
@@ -185,9 +177,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
                 regWrite(regs, base, instr.a, Data.new.num(ln + rn));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
 
@@ -200,9 +190,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 );
                 regWrite(regs, base, instr.a, result_str);
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
 
@@ -215,9 +203,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
                 regWrite(regs, base, instr.a, Data.new.num(ln - rn));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
             try self.setRuntimeMessageFmt("cannot subtract {s} from {s}", .{ revo.std_lib.dataToString(rhs), revo.std_lib.dataToString(lhs) });
@@ -230,9 +216,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (lhs.asNum()) |ln| if (rhs.asNum()) |rn| {
                 regWrite(slots, base, instr.a, Data.new.num(ln * rn));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
             const StrNum = struct { s: revo.memory.StringID, n: f64 };
@@ -256,9 +240,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     @memcpy(result[i * str.len ..][0..str.len], str);
                 regWrite(slots, base, instr.a, try self.adoptDataStringNoDedup(result));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
             try self.setRuntimeMessageFmt("cannot multiply {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
@@ -271,9 +253,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (rn == 0) return self.evalFailure(error.DivisionByZero);
                 regWrite(regs, base, instr.a, Data.new.num(ln / rn));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
             try self.setRuntimeMessageFmt("cannot divide {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
@@ -286,9 +266,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (rn == 0) return self.evalFailure(error.DivisionByZero);
                 regWrite(regs, base, instr.a, Data.new.num(@mod(ln, rn)));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
             try self.setRuntimeMessageFmt("cannot mod {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
@@ -306,9 +284,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (ri == 0) return self.evalFailure(error.DivisionByZero);
             regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(@mod(li, ri)))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .negate => {
@@ -316,9 +292,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (v.asNum()) |n| {
                 regWrite(regs, base, instr.a, Data.new.num(-n));
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
             try self.setRuntimeMessageFmt("cannot negate {s}", .{revo.std_lib.dataToString(v)});
@@ -330,9 +304,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const v_int = @as(i64, @intFromFloat(@as(f64, @bitCast(v.bits))));
             regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(-v_int))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .negate_float => {
@@ -340,9 +312,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (debug_assert_types) std.debug.assert(v.isNumber());
             regWrite(regs, base, instr.a, Data.new.num(-@as(f64, @bitCast(v.bits))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .add_int => {
@@ -356,9 +326,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const ri = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs.bits))));
             regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(li + ri))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .sub_int => {
@@ -372,9 +340,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const ri = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs.bits))));
             regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(li - ri))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .mul_int => {
@@ -388,9 +354,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const ri = @as(i64, @intFromFloat(@as(f64, @bitCast(rhs.bits))));
             regWrite(regs, base, instr.a, Data.new.num(@as(f64, @floatFromInt(li * ri))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .div_float => {
@@ -403,17 +367,13 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             if (@as(f64, @bitCast(rhs.bits)) == 0) return self.evalFailure(error.DivisionByZero);
             regWrite(regs, base, instr.a, Data.new.num(@as(f64, @bitCast(lhs.bits)) / @as(f64, @bitCast(rhs.bits))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         inline .eq, .neq, .lt, .gt, .lte, .gte => |op| {
             try compare_impl.evalCachedFast(regs, base, self, instr, op);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         inline .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => |op| {
@@ -433,9 +393,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             };
             regWrite(regs, base, instr.a, Data.new.boolean(result));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .@"and" => {
@@ -444,9 +402,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     !revo.isFalse(regRead(regs, base, instr.c)),
             ));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .@"or" => {
@@ -455,26 +411,20 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     !revo.isFalse(regRead(regs, base, instr.c)),
             ));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .not => {
             regWrite(regs, base, instr.a, Data.new.boolean(revo.isFalse(regRead(regs, base, instr.b))));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .table_new => {
             self.noteGCPressure(@sizeOf(revo.table.Table) + 64);
             regWrite(regs, base, instr.a, Data.new.table(try self.tables.create()));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .table_set => {
@@ -482,9 +432,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const key = regRead(regs, base, instr.b);
             if (key.asAtom()) |atom| {
                 if (try self.setStructField(table_value, atom, regRead(regs, base, instr.c))) {
-                    if (fiber.pc >= fiber.program.len) break :dispatch;
-                    instr = fiber.program[fiber.pc];
-                    fiber.pc += 1;
+                    if (!fetchNext(fiber, &instr)) break :dispatch;
                     continue :dispatch instr.op;
                 }
             }
@@ -492,9 +440,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const t = try self.tableFast(t_id);
             try t.put(t_id, self, key, regRead(regs, base, instr.c));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .table_get => {
@@ -505,9 +451,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (t.getRaw(key)) |value| {
                     regWrite(regs, base, instr.a, value);
 
-                    if (fiber.pc >= fiber.program.len) break :dispatch;
-                    instr = fiber.program[fiber.pc];
-                    fiber.pc += 1;
+                    if (!fetchNext(fiber, &instr)) break :dispatch;
                     continue :dispatch instr.op;
                 }
             }
@@ -515,17 +459,13 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 regWrite(regs, base, instr.a, resolved.value);
             } else regWrite(regs, base, instr.a, revo.core_atoms.data(.undef));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .table_set_atom => {
             const table_value = regRead(regs, base, instr.a);
             if (try self.setStructField(table_value, instr.bx, regRead(regs, base, instr.c))) {
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
             const t_id = table_value.asTable() orelse return self.evalFailure(error.TypeError);
@@ -533,9 +473,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const key = Data.new.atom(instr.bx);
             try t.put(t_id, self, key, regRead(regs, base, instr.c));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .table_get_atom => {
@@ -565,9 +503,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 regWrite(regs, base, instr.a, revo.core_atoms.data(.undef));
             }
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .tuple_new => {
@@ -576,9 +512,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             self.noteGCPressure(@sizeOf(revo.tuple.Tuple) + @sizeOf(Data) * count);
             regWrite(regs, base, instr.a, Data.new.tuple(try self.tuples.create(regs[start .. start + count])));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .tuple_get => {
@@ -595,9 +529,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             regWrite(regs, base, instr.a, t.items[idx]);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .tuple_get_const => {
@@ -609,9 +541,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             regWrite(regs, base, instr.a, t.items[instr.bx]);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .struct_new => {
@@ -627,9 +557,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             regWrite(regs, base, instr.a, Data.new.structVal(instance_id));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .struct_set_method => {
@@ -641,9 +569,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const desc = self.struct_types.getType(type_id) orelse return self.evalFailure(error.TypeError);
             try desc.methods.put(self.atomName(name_atom), method);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .struct_get_offset => {
@@ -652,9 +578,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const instance = self.structGetInstance(instance_id) catch return self.evalFailure(error.Panic);
             regWrite(regs, base, instr.a, instance.get(instr.bx));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .struct_set_offset => {
@@ -665,17 +589,13 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             instance.set(instr.bx, value);
             regWrite(regs, base, instr.a, Data.new.structVal(instance_id));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .jump => {
             fiber.pc = instr.bx;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .jump_if_false => {
@@ -683,9 +603,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (revo.isFalse(regRead(regs, base, instr.a))) fiber.pc = instr.bx;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .jump_if_true => {
@@ -693,9 +611,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (!revo.isFalse(regRead(regs, base, instr.a))) fiber.pc = instr.bx;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_global => {
@@ -705,9 +621,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             };
             regWrite(regs, base, instr.a, value);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_stdlib_global => {
@@ -717,9 +631,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             };
             regWrite(regs, base, instr.a, value);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .store_global => {
@@ -730,9 +642,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const val = regRead(regs, base, instr.a);
             try self.globals.put(instr.bx, val);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .store_global_const => {
@@ -744,9 +654,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             try self.globals.put(instr.bx, val);
             try self.const_globals.put(instr.bx, {});
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_local, .bind_local => {
@@ -758,9 +666,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 regs[dst] = regs[src];
             }
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .store_local => {
@@ -779,9 +685,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 regs[dst] = regs[src];
             }
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .closure => {
@@ -801,27 +705,21 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             regWrite(regs, base, instr.a, Data.new.function(try self.functions.createClosure(instr.bx, upvalues.items)));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_upval => {
             const closure2 = (try self.currentClosure()) orelse return self.evalFailure(error.InvalidLocal);
             regWrite(regs, base, instr.a, try self.loadUpvalueData(closure2.upvalues[instr.bx]));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .store_upval => {
             const closure2 = (try self.currentClosure()) orelse return self.evalFailure(error.InvalidLocal);
             try self.storeUpvalueData(closure2.upvalues[instr.bx], regRead(regs, base, instr.a));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .call => {
@@ -833,9 +731,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             regs = fiber.registers[0..fiber.registers_len];
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .call_field => {
@@ -869,9 +765,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             regs = fiber.registers[0..fiber.registers_len];
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .ret => {
@@ -881,9 +775,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             regs = fiber.registers[0..fiber.registers_len];
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .spawn => {
@@ -893,9 +785,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             regs = fiber.registers[0..fiber.registers_len];
             base = fiber.frames.items[fiber.frames.items.len - 1].base;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .join => {
@@ -916,9 +806,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
 
             if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .yield => {
@@ -942,9 +830,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             regWrite(regs, base, instr.a + 1, step);
             regWrite(regs, base, instr.a + 2, limit);
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .range_next => {
@@ -964,9 +850,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (has_next) regWrite(regs, base, instr.b, Data.new.num(current + step));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .range_for => {
@@ -984,9 +868,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             }
             regWrite(regs, base, instr.a, Data.new.num(current));
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .unwrap_result => {
@@ -994,16 +876,12 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const propagate_errors = instr.bx == 0;
 
             const tuple_id = if (val.asTuple()) |tid| tid else {
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
             const tuple = try self.tuples.get(tuple_id);
             if (tuple.items.len == 0) {
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
 
@@ -1033,15 +911,11 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     base = fiber.frames.items[fiber.frames.items.len - 1].base;
                     regs = fiber.registers[0..fiber.registers_len];
 
-                    if (fiber.pc >= fiber.program.len) break :dispatch;
-                    instr = fiber.program[fiber.pc];
-                    fiber.pc += 1;
+                    if (!fetchNext(fiber, &instr)) break :dispatch;
                     continue :dispatch instr.op;
                 }
 
-                if (fiber.pc >= fiber.program.len) break :dispatch;
-                instr = fiber.program[fiber.pc];
-                fiber.pc += 1;
+                if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
 
@@ -1051,9 +925,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 }
             }
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .jump_if_not_nil_and_not_err => {
@@ -1070,9 +942,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (!is_nil and !is_err) fiber.pc = instr.bx;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .jump_if_err => {
@@ -1088,13 +958,19 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (is_err) fiber.pc = instr.bx;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
     }
     return null;
+}
+
+/// fetch next instruction into `instr`, advance fiber pc. returns false if program ended
+fn fetchNext(fiber: *VM.Fiber, instr: *Instruction) bool {
+    if (fiber.pc >= fiber.program.len) return false;
+    instr.* = fiber.program[fiber.pc];
+    fiber.pc += 1;
+    return true;
 }
 
 pub inline fn fetch(self: *VM) !Instruction {

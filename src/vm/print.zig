@@ -99,16 +99,16 @@ pub fn writeTable(tbl: *revo.table.Table, writer: *std.Io.Writer, vm: *revo.VM, 
         try writer.writeAll(", ");
     }
     var cur = tbl.hash.first;
-    while (cur) |idx| {
-        const key = tbl.hash.buckets[idx].key;
-        const val = tbl.hash.buckets[idx].val;
+    while (cur != revo.table.NULL_ID) {
+        const key = tbl.hash.buckets[cur].key;
+        const val = tbl.hash.buckets[cur].val;
         if (should_write_idx) {
             try writeData(key, writer, vm, mode);
             try writer.writeAll(": ");
         }
         try writeData(val, writer, vm, mode);
         try writer.writeAll(", ");
-        cur = tbl.hash.buckets[idx].next;
+        cur = tbl.hash.buckets[cur].next;
     }
     try writer.writeAll("}");
 }

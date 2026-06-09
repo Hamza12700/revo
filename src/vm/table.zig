@@ -24,6 +24,8 @@ const memory = revo.memory;
 const Data = memory.Data;
 const testing = revo.lang.testing;
 
+pub const NULL_ID = std.math.maxInt(u32);
+
 pub const TablePool = struct {
     alloc: std.mem.Allocator,
     tables: std.ArrayList(?Table),
@@ -164,8 +166,8 @@ pub const Table = struct {
     const HashPart = struct {
         buckets: []Bucket = &.{},
         count: u32 = 0,
-        first: ?u32 = null,
-        last: ?u32 = null,
+        first: u32 = NULL_ID,
+        last: u32 = NULL_ID,
 
         const INIT_CAP = 4;
         const MAX_LOAD = 75; // percent
@@ -174,8 +176,8 @@ pub const Table = struct {
             status: enum(u8) { empty, occupied } = .empty,
             key: Data = undefined,
             val: Data = undefined,
-            next: ?u32 = null,
-            prev: ?u32 = null,
+            next: u32 = NULL_ID,
+            prev: u32 = NULL_ID,
         };
 
         fn deinit(self: *HashPart, alloc: std.mem.Allocator) void {
@@ -187,7 +189,7 @@ pub const Table = struct {
             if (self.buckets.len == 0) return null;
             const mask = @as(u32, @intCast(self.buckets.len - 1));
             var idx = @as(u32, @truncate(hashKey(key))) & mask;
-            const limit: u32 = self.count; // bound probes to avoid infinite loop on full table
+            const limit: u32 = self.count;
             var probes: u32 = 0;
             while (self.buckets[idx].status == .occupied) {
                 if (keyEq(self.buckets[idx].key, key)) return idx;
@@ -224,10 +226,11 @@ pub const Table = struct {
                 .status = .occupied,
                 .key = key,
                 .val = undefined,
-                .next = null,
+                .next = NULL_ID,
                 .prev = self.last,
             };
-            if (self.last) |l| self.buckets[l].next = idx else self.first = idx;
+            if (self.last != NULL_ID) self.buckets[self.last].next = idx;
+            self.first = if (self.first == NULL_ID) idx else self.first;
             self.last = idx;
             self.count += 1;
 
@@ -239,12 +242,12 @@ pub const Table = struct {
             const new_buckets = try alloc.alloc(Bucket, new_len);
             @memset(new_buckets, .{});
 
-            var new_first: ?u32 = null;
-            var new_last: ?u32 = null;
+            var new_first: u32 = NULL_ID;
+            var new_last: u32 = NULL_ID;
             var cur = self.first;
 
-            while (cur) |old_idx| {
-                const old = &self.buckets[old_idx];
+            while (cur != NULL_ID) {
+                const old = &self.buckets[cur];
                 var ni = @as(u32, @truncate(hashKey(old.key) & (new_len - 1)));
                 while (new_buckets[ni].status == .occupied)
                     ni = (ni + 1) & (new_len - 1);
@@ -253,10 +256,11 @@ pub const Table = struct {
                     .status = .occupied,
                     .key = old.key,
                     .val = old.val,
-                    .next = null,
+                    .next = NULL_ID,
                     .prev = new_last,
                 };
-                if (new_last) |l| new_buckets[l].next = ni else new_first = ni;
+                if (new_last != NULL_ID) new_buckets[new_last].next = ni;
+                new_first = if (new_first == NULL_ID) ni else new_first;
                 new_last = ni;
                 cur = old.next;
             }
@@ -272,8 +276,10 @@ pub const Table = struct {
             const mask = @as(u32, @intCast(self.buckets.len - 1));
 
             // unlink from insertion-order list
-            if (self.buckets[idx].prev) |p| self.buckets[p].next = self.buckets[idx].next else self.first = self.buckets[idx].next;
-            if (self.buckets[idx].next) |n| self.buckets[n].prev = self.buckets[idx].prev else self.last = self.buckets[idx].prev;
+            if (self.buckets[idx].prev != NULL_ID) self.buckets[self.buckets[idx].prev].next = self.buckets[idx].next;
+            if (self.buckets[idx].prev == NULL_ID) self.first = self.buckets[idx].next;
+            if (self.buckets[idx].next != NULL_ID) self.buckets[self.buckets[idx].next].prev = self.buckets[idx].prev;
+            if (self.buckets[idx].next == NULL_ID) self.last = self.buckets[idx].prev;
 
             self.buckets[idx].status = .empty;
             self.count -= 1;
@@ -283,17 +289,17 @@ pub const Table = struct {
             var probe = (hole + 1) & mask;
             while (self.buckets[probe].status == .occupied) : (probe = (probe + 1) & mask) {
                 const natural = @as(u32, @truncate(hashKey(self.buckets[probe].key) & mask));
-                // if elements natural position is in (hole, probe] it was not displaced by hole
                 const in_range = if (hole < probe)
                     natural > hole and natural <= probe
                 else
                     natural > hole or natural <= probe;
                 if (in_range) continue;
 
-                // move probe entry into hole
                 self.buckets[hole] = self.buckets[probe];
-                if (self.buckets[hole].prev) |p| self.buckets[p].next = hole else self.first = hole;
-                if (self.buckets[hole].next) |n| self.buckets[n].prev = hole else self.last = hole;
+                if (self.buckets[hole].prev != NULL_ID) self.buckets[self.buckets[hole].prev].next = hole;
+                if (self.buckets[hole].prev == NULL_ID) self.first = hole;
+                if (self.buckets[hole].next != NULL_ID) self.buckets[self.buckets[hole].next].prev = hole;
+                if (self.buckets[hole].next == NULL_ID) self.last = hole;
                 self.buckets[probe].status = .empty;
                 hole = probe;
             }
@@ -314,13 +320,13 @@ pub const Table = struct {
             pub fn next(it: *OrderedIter) ?struct { key: Data, val: Data } {
                 const idx = it.cur orelse return null;
                 const b = &it.part.buckets[idx];
-                it.cur = b.next;
+                it.cur = if (b.next != NULL_ID) @as(?u32, b.next) else null;
                 return .{ .key = b.key, .val = b.val };
             }
         };
 
         pub fn orderedIterator(self: *const HashPart) OrderedIter {
-            return .{ .part = self, .cur = self.first };
+            return .{ .part = self, .cur = if (self.first != NULL_ID) @as(?u32, self.first) else null };
         }
     };
 
@@ -462,10 +468,10 @@ pub const Table = struct {
             vm.markData(entry);
 
         var cur = self.hash.first;
-        while (cur) |idx| {
-            vm.markData(self.hash.buckets[idx].key);
-            vm.markData(self.hash.buckets[idx].val);
-            cur = self.hash.buckets[idx].next;
+        while (cur != NULL_ID) {
+            vm.markData(self.hash.buckets[cur].key);
+            vm.markData(self.hash.buckets[cur].val);
+            cur = self.hash.buckets[cur].next;
         }
     }
 

@@ -1535,10 +1535,12 @@ fn callStructConstructor(
             }
         }
         var cur = init_table.hash.first;
-        while (cur) |hidx| {
-            const k = init_table.hash.buckets[hidx].key;
-            defer cur = init_table.hash.buckets[hidx].next;
-            const k_atom = k.asAtom() orelse continue;
+        while (cur != root.table.NULL_ID) {
+            const k = init_table.hash.buckets[cur].key;
+            const k_atom = k.asAtom() orelse {
+                cur = init_table.hash.buckets[cur].next;
+                continue;
+            };
             if (desc.fieldIndex(k_atom) == null) {
                 try self.setRuntimeMessageFmt(
                     "unknown field `{s}` for struct `{s}`",
@@ -1549,6 +1551,7 @@ fn callStructConstructor(
                 );
                 return error.Panic;
             }
+            cur = init_table.hash.buckets[cur].next;
         }
     }
 

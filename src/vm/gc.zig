@@ -57,10 +57,10 @@ pub fn processMarkStack(self: *VM) void {
                 for (table.array.items) |entry| pushMark(self, entry);
 
                 var cur = table.hash.first;
-                while (cur) |idx| {
-                    pushMark(self, table.hash.buckets[idx].key);
-                    pushMark(self, table.hash.buckets[idx].val);
-                    cur = table.hash.buckets[idx].next;
+                while (cur != revo.table.NULL_ID) {
+                    pushMark(self, table.hash.buckets[cur].key);
+                    pushMark(self, table.hash.buckets[cur].val);
+                    cur = table.hash.buckets[cur].next;
                 }
                 if (table.metatable) |mt|
                     self.tables.mark(mt, self);
