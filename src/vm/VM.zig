@@ -77,7 +77,8 @@ pub const Fiber = struct {
     debug_info_id: ?DebugInfoID,
     registers: []Data,
     registers_len: usize = 0,
-    frames: std.ArrayList(Frame),
+    frames_hot: std.ArrayList(FrameHot),
+    frames_cold: std.ArrayList(FrameCold),
     open_upvalues: std.ArrayList(OpenUpvalueRef),
 
     running: bool,
@@ -98,7 +99,8 @@ pub const Fiber = struct {
             .program = program,
             .debug_info_id = null,
             .registers = try alloc.alloc(Data, reg_count),
-            .frames = try std.ArrayList(Frame).initCapacity(alloc, MAX_FRAMES),
+            .frames_hot = try std.ArrayList(FrameHot).initCapacity(alloc, MAX_FRAMES),
+            .frames_cold = try std.ArrayList(FrameCold).initCapacity(alloc, MAX_FRAMES),
             .open_upvalues = try std.ArrayList(OpenUpvalueRef).initCapacity(alloc, 8),
             .running = false,
             .state = .ready,
@@ -112,7 +114,8 @@ pub const Fiber = struct {
 
     pub fn deinit(self: *Fiber, alloc: std.mem.Allocator) void {
         alloc.free(self.registers);
-        self.frames.deinit(alloc);
+        self.frames_hot.deinit(alloc);
+        self.frames_cold.deinit(alloc);
         self.open_upvalues.deinit(alloc);
         self.waiters.deinit(alloc);
     }
@@ -235,7 +238,8 @@ pub fn init(runtime: revo.Runtime) !VM {
         .program = &.{},
         .debug_info_id = null,
         .registers = try runtime.alloc.alloc(Data, INIT_REG_COUNT),
-        .frames = try std.ArrayList(Frame).initCapacity(runtime.alloc, 4),
+        .frames_hot = try std.ArrayList(FrameHot).initCapacity(runtime.alloc, 4),
+        .frames_cold = try std.ArrayList(FrameCold).initCapacity(runtime.alloc, 4),
         .running = false,
         .open_upvalues = try std.ArrayList(Fiber.OpenUpvalueRef).initCapacity(runtime.alloc, 8),
         .state = .ready,
@@ -719,14 +723,21 @@ pub fn clearRuntimeMessage(self: *VM) void {
     self.runtime_message = null;
 }
 
-pub fn currentFrame(self: *VM) !*Frame {
-    if (self.currentFiber().frames.items.len == 0) return error.FrameUnderflow;
-    return &self.currentFiber().frames.items[self.currentFiber().frames.items.len - 1];
+pub fn currentFrame(self: *VM) !*FrameHot {
+    if (self.currentFiber().frames_hot.items.len == 0) return error.FrameUnderflow;
+    return &self.currentFiber().frames_hot.items[self.currentFiber().frames_hot.items.len - 1];
+}
+
+pub fn currentFrameCold(self: *VM) !*FrameCold {
+    const fiber = self.currentFiber();
+    if (fiber.frames_hot.items.len == 0) return error.FrameUnderflow;
+    const i = fiber.frames_hot.items.len - 1;
+    return &fiber.frames_cold.items[i];
 }
 
 pub inline fn currentClosure(self: *VM) !?*root.functions.Closure {
-    const frame = try self.currentFrame();
-    const closure_id = frame.closure_id orelse return null;
+    const frame_cold = try self.currentFrameCold();
+    const closure_id = frame_cold.closure_id orelse return null;
     const func = try self.functionFast(closure_id);
     return switch (func.*) {
         .closure => |*closure| closure,
@@ -826,7 +837,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     defer self.host_call_depth -= 1;
 
     const fiber = self.currentFiber();
-    const initial_frame_depth = fiber.frames.items.len;
+    const initial_frame_depth = fiber.frames_hot.items.len;
     const initial_pc = fiber.pc;
     const initial_slot_len = fiber.registers_len;
 
@@ -835,17 +846,21 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     fiber.registers[fiber.registers_len] = callee;
     fiber.registers_len += 1;
 
-    if (fiber.frames.items.len == 0) {
+    if (fiber.frames_hot.items.len == 0) {
         if (fiber.debug_info_id == null)
             fiber.debug_info_id = self.pending_debug_info_id;
 
-        try fiber.frames.append(
+        try fiber.frames_hot.append(
             self.runtime.alloc,
             .{ .return_addr = @intCast(fiber.program.len), .base = 0, .program = fiber.program },
         );
+        try fiber.frames_cold.append(
+            self.runtime.alloc,
+            .{ .call_site_pc = null, .result_register = 0, .register_count = 0, .closure_id = null },
+        );
     }
 
-    const caller_frame_depth = fiber.frames.items.len;
+    const caller_frame_depth = fiber.frames_hot.items.len;
     const base = (try self.currentFrame()).base;
     const callee_slot = fiber.registers_len - 1;
 
@@ -853,8 +868,9 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
         fiber.registers_len = initial_slot_len;
         fiber.pc = initial_pc;
         self.closeUpvalues(initial_slot_len) catch {};
-        while (fiber.frames.items.len > initial_frame_depth) {
-            _ = fiber.frames.pop();
+        while (fiber.frames_hot.items.len > initial_frame_depth) {
+            _ = fiber.frames_hot.pop();
+            _ = fiber.frames_cold.pop();
         }
     }
 
@@ -882,7 +898,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
 
     try self.callRegister(.{ .op = .call, .a = call_reg, .b = argc, .c = call_reg });
 
-    if (fiber.frames.items.len > caller_frame_depth) {
+    if (fiber.frames_hot.items.len > caller_frame_depth) {
         if (try self.execFiberUntilDepth(caller_frame_depth)) |_| return error.Panic;
     }
 
@@ -907,7 +923,8 @@ pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
     else
         0;
 
-    const frames = self.currentFiber().frames.items;
+    const hot_frames = self.currentFiber().frames_hot.items;
+    const cold_frames = self.currentFiber().frames_cold.items;
 
     var primary_span = if (info) |debug| self.spanAtPc(debug, current_pc) else null;
 
@@ -922,19 +939,19 @@ pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
                 std.mem.indexOf(u8, msg, " wants ") != null);
 
         const top_is_non_module = blk: {
-            if (frames.len == 0) break :blk false;
-            if (frames[frames.len - 1].closure_id) |id| {
+            if (hot_frames.len == 0) break :blk false;
+            if (cold_frames[hot_frames.len - 1].closure_id) |id| {
                 break :blk !std.mem.eql(u8, self.frameName(id), "<module>");
             }
             break :blk false;
         };
 
         if (is_struct_panic and top_is_non_module and
-            frames[frames.len - 1].call_site_pc != null and info != null)
+            cold_frames[hot_frames.len - 1].call_site_pc != null and info != null)
         {
             primary_span = self.spanAtPc(
                 info orelse unreachable,
-                frames[frames.len - 1].call_site_pc orelse unreachable,
+                cold_frames[hot_frames.len - 1].call_site_pc orelse unreachable,
             );
         }
     }
@@ -956,12 +973,12 @@ pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
     };
 
     var out_idx: usize = 0;
-    var i = frames.len;
+    var i = hot_frames.len;
     while (i > 0 and
         out_idx < EvalFailure.max_trace_frames)
     {
         i -= 1;
-        const frame = frames[i];
+        const frame = cold_frames[i];
         if (frame.closure_id == null) continue;
         failure.trace[out_idx] = .{
             .function_name = self.frameName(
@@ -976,7 +993,7 @@ pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
             else
                 null,
             .span = if (info) |debug|
-                if (i == frames.len - 1)
+                if (i == hot_frames.len - 1)
                     self.spanAtPc(debug, current_pc)
                 else if (frame.call_site_pc) |pc|
                     self.spanAtPc(debug, pc)
@@ -984,7 +1001,7 @@ pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
                     null
             else
                 null,
-            .pc = if (i == frames.len - 1)
+            .pc = if (i == hot_frames.len - 1)
                 current_pc
             else
                 frame.call_site_pc,
@@ -1336,16 +1353,17 @@ pub fn callRegister(
                     fiber.program[fiber.pc].op == .ret)
                 {
                     @branchHint(.unlikely);
-                    const tail_frame = try self.currentFrame();
-                    if (tail_frame.closure_id != null and
-                        tail_frame.base > 0)
+                    const tail_frame_hot = try self.currentFrame();
+                    const tail_frame_cold = try self.currentFrameCold();
+                    if (tail_frame_cold.closure_id != null and
+                        tail_frame_hot.base > 0)
                     {
                         const caller_fn_slot =
-                            tail_frame.base - 1;
+                            tail_frame_hot.base - 1;
                         const moved_len = argc + 1;
 
                         try self.closeUpvalues(
-                            tail_frame.base,
+                            tail_frame_hot.base,
                         );
 
                         if (callee_slot != caller_fn_slot) {
@@ -1356,12 +1374,12 @@ pub fn callRegister(
                             );
                         }
 
-                        tail_frame.base = caller_fn_slot + 1;
-                        tail_frame.call_site_pc = if (fiber.pc > 0) fiber.pc - 1 else 0;
-                        tail_frame.closure_id = closure_id;
-                        tail_frame.register_count = closure.register_count;
+                        tail_frame_hot.base = caller_fn_slot + 1;
+                        tail_frame_cold.call_site_pc = if (fiber.pc > 0) fiber.pc - 1 else 0;
+                        tail_frame_cold.closure_id = closure_id;
+                        tail_frame_cold.register_count = closure.register_count;
 
-                        const tail_needed = tail_frame.base +
+                        const tail_needed = tail_frame_hot.base +
                             closure.register_count;
                         if (tail_needed > fiber.registers_len) {
                             try ensureRegCapacity(fiber, self.runtime.alloc, tail_needed);
@@ -1369,7 +1387,7 @@ pub fn callRegister(
                         }
                         if (argc < closure.register_count) {
                             @memset(
-                                fiber.registers[tail_frame.base + argc .. tail_frame.base + closure.register_count],
+                                fiber.registers[tail_frame_hot.base + argc .. tail_frame_hot.base + closure.register_count],
                                 revo.core_atoms.data(.missing),
                             );
                         }
@@ -1395,16 +1413,21 @@ pub fn callRegister(
                     );
                 }
 
-                try fiber.frames.append(
+                try fiber.frames_hot.append(
                     self.runtime.alloc,
                     .{
                         .return_addr = fiber.pc,
-                        .call_site_pc = if (fiber.pc > 0) fiber.pc - 1 else 0,
                         .base = new_base,
+                        .program = fiber.program,
+                    },
+                );
+                try fiber.frames_cold.append(
+                    self.runtime.alloc,
+                    .{
+                        .call_site_pc = if (fiber.pc > 0) fiber.pc - 1 else 0,
                         .result_register = instr.c,
                         .register_count = closure.register_count,
                         .closure_id = closure_id,
-                        .program = fiber.program,
                     },
                 );
                 if (self.functions.segments.items.len > closure.segment_id) {
@@ -1683,24 +1706,25 @@ pub fn returnRegister(
     const fiber = self.currentFiber();
     const result = regRead(
         fiber.registers,
-        fiber.frames.items[
-            fiber.frames.items.len - 1
+        fiber.frames_hot.items[
+            fiber.frames_hot.items.len - 1
         ].base,
         instr.a,
     );
-    const frame = fiber.frames.pop() orelse unreachable;
+    const frame_hot = fiber.frames_hot.pop() orelse unreachable;
+    const frame_cold = fiber.frames_cold.pop() orelse unreachable;
 
     if (fiber.open_upvalues.items.len > 0)
-        try self.closeUpvalues(frame.base);
+        try self.closeUpvalues(frame_hot.base);
 
-    fiber.pc = frame.return_addr;
-    fiber.program = frame.program;
+    fiber.pc = frame_hot.return_addr;
+    fiber.program = frame_hot.program;
 
     // check if returning to exit frame
     // 0 or 1 frames left after pop means we're exiting (or at) module level
     const returning_to_exit =
         self.sched.current_fiber == 0 and
-        fiber.frames.items.len <= 1;
+        fiber.frames_hot.items.len <= 1;
 
     // toplevel :err tuple should panic
     if (returning_to_exit) {
@@ -1733,7 +1757,7 @@ pub fn returnRegister(
         }
     }
 
-    if (fiber.frames.items.len == 0 or
+    if (fiber.frames_hot.items.len == 0 or
         fiber.pc >= fiber.program.len)
     {
         const finished_id = self.sched.current_fiber;
@@ -1745,11 +1769,12 @@ pub fn returnRegister(
         return;
     }
 
-    const parent = try self.currentFrame();
-    const result_slot = parent.base +
-        frame.result_register;
-    const parent_end = parent.base +
-        parent.register_count;
+    const parent_hot = try self.currentFrame();
+    const parent_cold = try self.currentFrameCold();
+    const result_slot = parent_hot.base +
+        frame_cold.result_register;
+    const parent_end = parent_hot.base +
+        parent_cold.register_count;
     fiber.registers_len = @max(result_slot + 1, parent_end);
     fiber.registers[result_slot] = result;
 }
@@ -1815,13 +1840,16 @@ pub inline fn spawnRegister(
     const child_closure_id = try self.detachClosureForFiber(
         closure_id,
     );
-    try child.frames.append(self.runtime.alloc, .{
+    try child.frames_hot.append(self.runtime.alloc, .{
         .return_addr = @intCast(child.program.len),
         .base = 0,
+        .program = child.program,
+    });
+    try child.frames_cold.append(self.runtime.alloc, .{
+        .call_site_pc = null,
         .result_register = 0,
         .register_count = closure.register_count,
         .closure_id = child_closure_id,
-        .program = child.program,
     });
     child.pc = closure.addr;
 
@@ -1871,7 +1899,8 @@ const root = @import("root.zig");
 pub const EvalErrorKind = root.debug.EvalErrorKind;
 pub const EvalFailure = root.debug.EvalFailure;
 pub const EvalResult = root.debug.EvalResult;
-const Frame = root.functions.Frame;
+const FrameHot = root.functions.FrameHot;
+const FrameCold = root.functions.FrameCold;
 const FunctionPool = root.functions.FunctionPool;
 pub const lookup = root.lookup;
 pub const memory = root.memory;

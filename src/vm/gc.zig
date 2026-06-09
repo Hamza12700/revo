@@ -108,7 +108,7 @@ pub inline fn markRoots(self: *VM) void {
     for (self.sched.fibers.items) |fiber| {
         for (fiber.registers[0..fiber.registers_len]) |data|
             pushMark(self, data);
-        for (fiber.frames.items) |frame| {
+        for (fiber.frames_cold.items) |frame| {
             if (frame.closure_id) |id|
                 self.functions.mark(id, self);
         }

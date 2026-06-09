@@ -17,14 +17,17 @@ pub const RegisterCount = Register;
 pub const PrototypeID = usize;
 pub const UpvalueID = usize;
 
-pub const Frame = struct {
+pub const FrameHot = struct {
     return_addr: ProgramCounter,
-    call_site_pc: ?ProgramCounter = null,
-    base: usize = 0,
-    result_register: Register = 0,
-    register_count: RegisterCount = 0,
-    closure_id: ?mem.FunctionID = null,
-    program: []const revo.Instruction = &.{},
+    base: usize,
+    program: []const revo.Instruction,
+};
+
+pub const FrameCold = struct {
+    call_site_pc: ?ProgramCounter,
+    result_register: Register,
+    register_count: RegisterCount,
+    closure_id: ?mem.FunctionID,
 };
 
 pub const NativeFn = *const fn (args: []const Data, vm: *revo.VM) NativeResult;

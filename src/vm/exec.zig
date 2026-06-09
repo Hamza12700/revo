@@ -14,15 +14,20 @@ pub fn runReport(self: *VM) !@TypeOf(self.*).EvalResult {
     self.clearPanicMessage();
     self.clearRuntimeMessage();
 
-    if (self.mainFiber().frames.items.len == 0) {
+    if (self.mainFiber().frames_hot.items.len == 0) {
         if (self.mainFiber().debug_info_id == null)
             self.mainFiber().debug_info_id = self.pending_debug_info_id;
 
-        try self.mainFiber().frames.append(self.runtime.alloc, .{
+        try self.mainFiber().frames_hot.append(self.runtime.alloc, .{
             .return_addr = @intCast(self.mainFiber().program.len),
             .base = 0,
-            .register_count = 16,
             .program = self.mainFiber().program,
+        });
+        try self.mainFiber().frames_cold.append(self.runtime.alloc, .{
+            .call_site_pc = null,
+            .result_register = 0,
+            .register_count = 16,
+            .closure_id = null,
         });
         const fiber = self.mainFiber();
         fiber.registers_len = 16;
@@ -122,7 +127,7 @@ pub inline fn execFiber(self: *VM) !?VM.EvalFailure {
     return execFiberGeneric(self, false, 0);
 }
 
-/// runs dispatch until fiber.frames.items.len <= target_depth
+/// runs dispatch until fiber.frames_hot.items.len <= target_depth
 pub inline fn execFiberUntilDepth(self: *VM, target_depth: usize) !?VM.EvalFailure {
     return execFiberGeneric(self, true, target_depth);
 }
@@ -135,7 +140,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
     var instr = fiber.program[fiber.pc];
     fiber.pc += 1;
 
-    var base = fiber.frames.items[fiber.frames.items.len - 1].base;
+    var base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
     var regs = fiber.registers[0..fiber.registers_len];
 
     dispatch: switch (instr.op) {
@@ -696,8 +701,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             for (proto.upvalue_specs) |spec| {
                 if (spec.is_local) {
-                    const frame = fiber.frames.items[fiber.frames.items.len - 1];
-                    try upvalues.append(alloc, try self.captureUpvalue(frame.base + spec.index));
+                    const frame_base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
+                    try upvalues.append(alloc, try self.captureUpvalue(frame_base + spec.index));
                 } else {
                     const closure2 = (try self.currentClosure()) orelse return self.evalFailure(error.TypeError);
                     try upvalues.append(alloc, closure2.upvalues[spec.index]);
@@ -727,10 +732,10 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 error.Parked => break :dispatch,
                 else => return self.evalFailure(e),
             };
-            base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
             regs = fiber.registers[0..fiber.registers_len];
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            if (if (comptime use_depth) fiber.frames_hot.items.len <= target_depth else !fiber.running) break :dispatch;
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
@@ -761,20 +766,20 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 };
             }
 
-            base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
             regs = fiber.registers[0..fiber.registers_len];
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            if (if (comptime use_depth) fiber.frames_hot.items.len <= target_depth else !fiber.running) break :dispatch;
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .ret => {
             self.returnRegister(instr) catch |e| return self.evalFailure(e);
-            if (fiber.frames.items.len == 0) break :dispatch;
-            base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            if (fiber.frames_hot.items.len == 0) break :dispatch;
+            base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
             regs = fiber.registers[0..fiber.registers_len];
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            if (if (comptime use_depth) fiber.frames_hot.items.len <= target_depth else !fiber.running) break :dispatch;
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
@@ -783,7 +788,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             // spawnRegister may have reallocated fibers
             fiber = self.currentFiber();
             regs = fiber.registers[0..fiber.registers_len];
-            base = fiber.frames.items[fiber.frames.items.len - 1].base;
+            base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
 
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
@@ -805,7 +810,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 self.sched.parkCurrentWithResult(.{ .join = target_id }, base + instr.a);
             }
 
-            if (if (comptime use_depth) fiber.frames.items.len <= target_depth else !fiber.running) break :dispatch;
+            if (if (comptime use_depth) fiber.frames_hot.items.len <= target_depth else !fiber.running) break :dispatch;
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
@@ -889,7 +894,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             if (tag.asAtom() == revo.core_atoms.atom_id(.err)) {
                 if (propagate_errors) {
-                    if (fiber.frames.items.len == 2) {
+                    if (fiber.frames_hot.items.len == 2) {
                         if (tuple.items.len > 1) {
                             var buf = std.Io.Writer.Allocating.init(alloc);
                             defer buf.deinit();
@@ -907,8 +912,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                     }
                     self.returnRegister(.{ .op = .ret, .a = instr.a }) catch |e| return self.evalFailure(e);
 
-                    if (fiber.frames.items.len == 0) break :dispatch;
-                    base = fiber.frames.items[fiber.frames.items.len - 1].base;
+                    if (fiber.frames_hot.items.len == 0) break :dispatch;
+                    base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
                     regs = fiber.registers[0..fiber.registers_len];
 
                     if (!fetchNext(fiber, &instr)) break :dispatch;
@@ -966,7 +971,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 }
 
 /// fetch next instruction into `instr`, advance fiber pc. returns false if program ended
-fn fetchNext(fiber: *VM.Fiber, instr: *Instruction) bool {
+inline fn fetchNext(fiber: *VM.Fiber, instr: *Instruction) bool {
     if (fiber.pc >= fiber.program.len) return false;
     instr.* = fiber.program[fiber.pc];
     fiber.pc += 1;
