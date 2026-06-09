@@ -167,7 +167,7 @@ pub fn wakeFiber(self: *@This(), fid: FiberID, result: ?Data) !void {
     if (fiber.parked_result_slot) |slot| {
         if (result) |value| fiber.registers[slot] = value;
     } else if (result) |value| {
-        if (fiber.registers_len >= VM.MAX_REGISTERS) return error.OutOfMemory;
+        try VM.ensureRegCapacity(fiber, self.alloc, fiber.registers_len + 1);
         fiber.registers[fiber.registers_len] = value;
         fiber.registers_len += 1;
     }

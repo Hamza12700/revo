@@ -184,10 +184,10 @@ fn callViaStackLayout(self: *VM, callee_slot: usize, argc: usize) VM.EvalError!v
     const args_start = callee_slot + 1;
     const args_end = args_start + argc;
     const callee = fiber.registers[callee_slot];
-    if (fiber.registers_len + argc + 1 > VM.MAX_REGISTERS) return error.StackOverflow;
+    try VM.ensureRegCapacity(fiber, self.runtime.alloc, fiber.registers_len + argc + 1);
     const result = try self.callFunction(callee, fiber.registers[args_start..args_end]);
     fiber.registers_len = callee_slot;
-    if (fiber.registers_len >= VM.MAX_REGISTERS) return error.StackOverflow;
+    try VM.ensureRegCapacity(fiber, self.runtime.alloc, fiber.registers_len + 1);
     fiber.registers[fiber.registers_len] = result;
     fiber.registers_len += 1;
 }

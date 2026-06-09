@@ -26,7 +26,7 @@ test "vm join returns dead fiber result" {
     var vm = try VM.init(vt.runtime());
     defer vm.deinit();
 
-    const child = try VM.Fiber.init(vm.runtime.alloc, 1, &.{});
+    const child = try VM.Fiber.init(vm.runtime.alloc, 1, &.{}, 16);
     try vm.sched.fibers.append(vm.runtime.alloc, child);
     vm.sched.fibers.items[1].state = .dead;
     vm.sched.fibers.items[1].result = Data.new.num(42);
@@ -121,7 +121,7 @@ test "vm channel handoff wakes blocked receiver" {
 
     const ch = try vm.sched.channelCreate(&vm.tables, 0);
 
-    const recv = try VM.Fiber.init(vm.runtime.alloc, 1, &.{});
+    const recv = try VM.Fiber.init(vm.runtime.alloc, 1, &.{}, 16);
     try vm.sched.fibers.append(vm.runtime.alloc, recv);
     vm.sched.current_fiber = 1;
     _ = try vm.sched.channelRecv(ch);
@@ -138,7 +138,7 @@ test "scheduler generic park wake resumes parked fiber" {
     var vm = try VM.init(vt.runtime());
     defer vm.deinit();
 
-    const child = try VM.Fiber.init(vm.runtime.alloc, 1, &.{});
+    const child = try VM.Fiber.init(vm.runtime.alloc, 1, &.{}, 16);
     try vm.sched.fibers.append(vm.runtime.alloc, child);
     vm.sched.fibers.items[1].registers_len = 1;
     vm.sched.fibers.items[1].registers[0] = revo.core_atoms.data(.missing);

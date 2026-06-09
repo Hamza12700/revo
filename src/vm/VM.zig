@@ -1,5 +1,5 @@
 pub const MAX_FRAMES = 256;
-pub const MAX_REGISTERS = 65535;
+pub const INIT_REG_COUNT = 256;
 pub const ProgramCounter = usize;
 pub const ConstantID = usize;
 
@@ -75,7 +75,7 @@ pub const Fiber = struct {
     pc: ProgramCounter,
     program: []const Instruction,
     debug_info_id: ?DebugInfoID,
-    registers: *[MAX_REGISTERS]Data,
+    registers: []Data,
     registers_len: usize = 0,
     frames: std.ArrayList(Frame),
     open_upvalues: std.ArrayList(OpenUpvalueRef),
@@ -91,13 +91,13 @@ pub const Fiber = struct {
     err_atom: ?mem.AtomID = null,
     waiters: std.ArrayList(FiberID),
 
-    pub fn init(alloc: std.mem.Allocator, id: FiberID, program: []const Instruction) !Fiber {
+    pub fn init(alloc: std.mem.Allocator, id: FiberID, program: []const Instruction, reg_count: usize) !Fiber {
         return .{
             .id = id,
             .pc = 0,
             .program = program,
             .debug_info_id = null,
-            .registers = try alloc.create([MAX_REGISTERS]Data),
+            .registers = try alloc.alloc(Data, reg_count),
             .frames = try std.ArrayList(Frame).initCapacity(alloc, MAX_FRAMES),
             .open_upvalues = try std.ArrayList(OpenUpvalueRef).initCapacity(alloc, 8),
             .running = false,
@@ -111,7 +111,7 @@ pub const Fiber = struct {
     }
 
     pub fn deinit(self: *Fiber, alloc: std.mem.Allocator) void {
-        alloc.destroy(self.registers);
+        alloc.free(self.registers);
         self.frames.deinit(alloc);
         self.open_upvalues.deinit(alloc);
         self.waiters.deinit(alloc);
@@ -234,7 +234,7 @@ pub fn init(runtime: revo.Runtime) !VM {
         .pc = 0,
         .program = &.{},
         .debug_info_id = null,
-        .registers = try runtime.alloc.create([MAX_REGISTERS]Data),
+        .registers = try runtime.alloc.alloc(Data, INIT_REG_COUNT),
         .frames = try std.ArrayList(Frame).initCapacity(runtime.alloc, 4),
         .running = false,
         .open_upvalues = try std.ArrayList(Fiber.OpenUpvalueRef).initCapacity(runtime.alloc, 8),
@@ -395,7 +395,7 @@ pub fn stringValue(self: *VM, id: mem.StringID) []const u8 {
 
 pub fn push(self: *VM, val: Data) !void {
     const fiber = self.currentFiber();
-    if (fiber.registers_len >= MAX_REGISTERS) return error.OutOfMemory;
+    try ensureRegCapacity(fiber, self.runtime.alloc, fiber.registers_len + 1);
     fiber.registers[fiber.registers_len] = val;
     fiber.registers_len += 1;
 }
@@ -465,9 +465,15 @@ fn absoluteRegisterIndex(self: *VM, reg: opcode.Register) !usize {
     return frame.base + reg;
 }
 
+pub fn ensureRegCapacity(fiber: *Fiber, alloc: std.mem.Allocator, needed: usize) !void {
+    if (needed <= fiber.registers.len) return;
+    const new_cap = @max(needed, fiber.registers.len * 2);
+    fiber.registers = try alloc.realloc(fiber.registers, new_cap);
+}
+
 fn ensureAbsoluteSlot(self: *VM, slot: usize) !void {
     const fiber = self.currentFiber();
-    if (slot >= MAX_REGISTERS) return error.OutOfMemory;
+    try ensureRegCapacity(fiber, self.runtime.alloc, slot + 1);
     if (slot < fiber.registers_len) return;
     const old_len = fiber.registers_len;
     @memset(fiber.registers[old_len .. slot + 1], revo.core_atoms.data(.missing));
@@ -825,7 +831,7 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     const initial_slot_len = fiber.registers_len;
 
     // root callee before any allocation that could trigger GC
-    if (fiber.registers_len >= MAX_REGISTERS) return error.StackOverflow;
+    try ensureRegCapacity(fiber, self.runtime.alloc, fiber.registers_len + 1);
     fiber.registers[fiber.registers_len] = callee;
     fiber.registers_len += 1;
 
@@ -855,12 +861,12 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
     // note: callee already rooted at callee_slot above
     // callee_slot points to where we stored it; args start at callee_slot + 1
     if (maybe_first) |first| {
-        if (fiber.registers_len >= MAX_REGISTERS) return error.StackOverflow;
+        try ensureRegCapacity(fiber, self.runtime.alloc, fiber.registers_len + 1);
         fiber.registers[fiber.registers_len] = first;
         fiber.registers_len += 1;
     }
     for (args) |arg| {
-        if (fiber.registers_len >= MAX_REGISTERS) return error.StackOverflow;
+        try ensureRegCapacity(fiber, self.runtime.alloc, fiber.registers_len + 1);
         fiber.registers[fiber.registers_len] = arg;
         fiber.registers_len += 1;
     }
@@ -1358,7 +1364,7 @@ pub fn callRegister(
                         const tail_needed = tail_frame.base +
                             closure.register_count;
                         if (tail_needed > fiber.registers_len) {
-                            if (tail_needed > MAX_REGISTERS) return error.StackOverflow;
+                            try ensureRegCapacity(fiber, self.runtime.alloc, tail_needed);
                             fiber.registers_len = tail_needed;
                         }
                         if (argc < closure.register_count) {
@@ -1379,7 +1385,7 @@ pub fn callRegister(
                 const new_base = callee_slot + 1;
                 const call_needed = new_base + closure.register_count;
                 if (call_needed > fiber.registers_len) {
-                    if (call_needed > MAX_REGISTERS) return error.StackOverflow;
+                    try ensureRegCapacity(fiber, self.runtime.alloc, call_needed);
                     fiber.registers_len = call_needed;
                 }
                 if (argc < closure.register_count) {
@@ -1786,12 +1792,13 @@ pub inline fn spawnRegister(
         self.functions.segments.items[closure.segment_id]
     else
         fiber.program;
-    var child = try Fiber.init(self.runtime.alloc, child_id, child_program);
+    var child = try Fiber.init(self.runtime.alloc, child_id, child_program, closure.register_count);
     errdefer child.deinit(self.runtime.alloc);
     child.debug_info_id = fiber.debug_info_id;
     child.state = .ready;
 
-    if (closure.register_count > MAX_REGISTERS) return error.StackOverflow;
+    if (closure.register_count > child.registers.len)
+        child.registers = try self.runtime.alloc.realloc(child.registers, closure.register_count);
     child.registers_len = closure.register_count;
     @memset(child.registers[0..closure.register_count], revo.core_atoms.data(.missing));
 
@@ -1824,7 +1831,7 @@ pub inline fn spawnRegister(
     // re-acquire fiber pointer bc append above may have reallocated
     const cur = self.currentFiber();
     if (result_slot >= cur.registers_len) {
-        if (result_slot >= MAX_REGISTERS) return error.StackOverflow;
+        try ensureRegCapacity(cur, self.runtime.alloc, result_slot + 1);
         cur.registers_len = result_slot + 1;
     }
     cur.registers[result_slot] = Data.new.num(@as(i64, @intCast(child_id)));
