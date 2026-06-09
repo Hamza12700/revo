@@ -908,11 +908,14 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .spawn => {
             self.spawnRegister(instr, base) catch |e| return self.evalFailure(e);
-            regs = fiber.registers[0..fiber.registers_len];
+            // re-acquire bc spawnRegister may have reallocated fibers
+            const sf = self.currentFiber();
+            regs = sf.registers[0..sf.registers_len];
+            base = sf.frames.items[sf.frames.items.len - 1].base;
 
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
+            if (sf.pc >= sf.program.len) break :dispatch;
+            instr = sf.program[sf.pc];
+            sf.pc += 1;
             continue :dispatch instr.op;
         },
         .join => {

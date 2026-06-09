@@ -833,8 +833,6 @@ fn detachClosureForFiber(self: *VM, closure_id: mem.FunctionID) !mem.FunctionID 
     return self.functions.createClosure(closure.prototype, detached.items);
 }
 
-const execFiberUntilDepth = vm_exec.execFiberUntilDepth;
-
 pub fn run(self: *VM) !void {
     return switch (try self.runReport()) {
         .ok => {},
@@ -916,8 +914,6 @@ fn callFunctionParts(self: *VM, callee: Data, maybe_first: ?Data, args: []const 
 pub inline fn callFunction(self: *VM, callee: Data, args: []const Data) EvalError!Data {
     return self.callFunctionParts(callee, null, args);
 }
-
-pub const compare = compare_impl.compare;
 
 pub fn evalFailure(self: *VM, err: EvalError) EvalFailure {
     const kind: EvalErrorKind = switch (err) {
@@ -1847,12 +1843,15 @@ pub inline fn spawnRegister(
     try self.sched.fibers.append(self.runtime.alloc, child);
     try self.sched.enqueueRunnable(child_id);
     const result_slot = base + instr.c;
-    if (result_slot >= fiber.registers_len) {
+    // re-acquire fiber pointer bc append above may have reallocated
+    const cur = self.currentFiber();
+    if (result_slot >= cur.registers_len) {
         if (result_slot >= MAX_REGISTERS) return error.StackOverflow;
-        fiber.registers_len = result_slot + 1;
+        cur.registers_len = result_slot + 1;
     }
-    fiber.registers[result_slot] = Data.new.num(@as(i64, @intCast(child_id)));
+    cur.registers[result_slot] = Data.new.num(@as(i64, @intCast(child_id)));
 }
+
 // gc
 pub fn markData(self: *VM, data: Data) void {
     vm_gc.markData(self, data);
@@ -1882,6 +1881,7 @@ const lang = revo.lang;
 const Span = lang.Span;
 
 const compare_impl = @import("compare.zig");
+pub const compare = compare_impl.compare;
 const root = @import("root.zig");
 pub const EvalErrorKind = root.debug.EvalErrorKind;
 pub const EvalFailure = root.debug.EvalFailure;
@@ -1914,4 +1914,5 @@ pub const runImportedModule = module.runImportedModule;
 const Scheduler = @import("scheduler.zig");
 const struct_mod = @import("struct.zig");
 const vm_exec = @import("exec.zig");
+const execFiberUntilDepth = vm_exec.execFiberUntilDepth;
 const vm_gc = @import("gc.zig");
