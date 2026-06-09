@@ -175,21 +175,7 @@ gc_nursery_threshold: usize = 64 * 1024,
 /// for table lookups
 icache: [256]ICacheEntry = undefined,
 
-// gc work state for incremental
 gc_mark_stack: std.ArrayList(MarkItem),
-gc_sweep_state: struct {
-    phase: enum {
-        idle,
-        tables,
-        tuples,
-        functions,
-        upvalues,
-        structs,
-        strings,
-        done,
-    } = .idle,
-    cursor: usize = 0,
-},
 
 const MarkItem = union(enum) {
     data: Data,
@@ -227,7 +213,6 @@ pub fn init(runtime: revo.Runtime) !VM {
         .loading_stack = try std.ArrayList([]const u8).initCapacity(rt.alloc, 1),
         .loaded_extensions = try .initCapacity(rt.alloc, 0),
         .gc_mark_stack = try std.ArrayList(MarkItem).initCapacity(rt.alloc, 256),
-        .gc_sweep_state = .{},
     };
     try revo.async_backend_impl.init(&vm.runtime.async_backend);
     errdefer revo.async_backend_impl.deinit(&vm.runtime.async_backend);
@@ -563,8 +548,6 @@ pub fn dataAtom(self: *VM, name: []const u8) !Data {
 pub fn setGlobal(self: *VM, name: []const u8, val: Data) !void {
     const id = try self.internAtom(name);
     try self.globals.put(id, val);
-    if (self.gc_sweep_state.phase != .idle and self.gc_sweep_state.phase != .done)
-        self.markData(val);
 }
 
 //
@@ -586,8 +569,6 @@ pub fn registerGlobal(self: *VM, name: []const u8, fn_id: mem.FunctionID) !void 
     const val = Data.new.function(fn_id);
     try self.globals.put(atom, val);
     try self.stdlib_globals.put(atom, val);
-    if (self.gc_sweep_state.phase != .idle and self.gc_sweep_state.phase != .done)
-        self.markData(val);
 }
 
 /// get or create a module table and install it as a global
@@ -600,8 +581,6 @@ pub fn ensureModule(self: *VM, name: []const u8) !mem.TableID {
     const val = Data.new.table(tid);
     try self.globals.put(atom, val);
     try self.stdlib_globals.put(atom, val);
-    if (self.gc_sweep_state.phase != .idle and self.gc_sweep_state.phase != .done)
-        self.markData(val);
     return tid;
 }
 
@@ -615,8 +594,6 @@ pub fn putInTable(
     const atom = try self.internAtom(name);
     const t = try self.tables.get(table_id);
     try t.putRawAtom(atom, Data.new.function(fn_id));
-    if (self.gc_sweep_state.phase != .idle and self.gc_sweep_state.phase != .done)
-        self.markData(Data.new.function(fn_id));
 }
 
 /// same as putInTable but the key is an already-resolved core atom
@@ -628,8 +605,6 @@ pub fn putInTableAtom(
 ) !void {
     const t = try self.tables.get(table_id);
     try t.putRawAtom(atom, Data.new.function(fn_id));
-    if (self.gc_sweep_state.phase != .idle and self.gc_sweep_state.phase != .done)
-        self.markData(Data.new.function(fn_id));
 }
 
 pub inline fn getGlobal(self: *VM, name: []const u8) ?Data {

@@ -239,8 +239,7 @@ test "vm gc keeps tables written during sweep alive" {
         try root.put(root_id, &vm, key, Data.new.table(child_id));
     }
 
-    while (vm.gc_sweep_state.phase != .idle)
-        vm.maybeCollectGarbage();
+    vm.maybeCollectGarbage();
 
     const root = try vm.tables.get(root_id);
     const child = root.getRaw(key) orelse unreachable;

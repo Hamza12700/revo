@@ -16,23 +16,10 @@ pub inline fn noteGCPressure(self: *VM, bytes: usize) void {
 
 pub fn maybeCollectGarbage(self: *VM) void {
     if (!self.gc_enabled or !self.gc_pending) return;
+    if (self.host_call_depth > 0) return;
 
-    if (self.gc_sweep_state.phase != .idle and
-        self.gc_sweep_state.phase != .done)
-    {
-        doIncrementalSweep(self);
-        if (self.gc_sweep_state.phase == .done) {
-            self.gc_sweep_state = .{};
-            self.gc_pending = false;
-            const live_bytes = self.tables.bytes() +
-                self.tuples.bytes() +
-                self.functions.bytes() +
-                self.strings.bytes();
-
-            self.gc_threshold = @max(32 * 1024, live_bytes * self.gc_pause_factor);
-        }
-        return;
-    }
+    // const std = @import("std");
+    // std.log.debug("here", .{});
 
     self.gc_bytes_allocated = 0;
     self.tables.clearMarks();
@@ -44,121 +31,19 @@ pub fn maybeCollectGarbage(self: *VM) void {
     markRoots(self);
     processMarkStack(self);
 
-    self.gc_sweep_state.phase = .tables;
-    self.gc_sweep_state.cursor = 0;
-    doIncrementalSweep(self);
+    self.tables.sweep();
+    self.tuples.sweep();
+    self.functions.sweep();
+    self.struct_instances.sweep();
+    self.strings.sweep();
 
-    if (self.gc_sweep_state.phase == .done) {
-        self.gc_sweep_state = .{};
-        self.gc_pending = false;
-        const live_bytes = self.tables.bytes() +
-            self.tuples.bytes() +
-            self.functions.bytes() +
-            self.strings.bytes();
-        self.gc_threshold = @max(32 * 1024, live_bytes * self.gc_pause_factor);
-    }
-}
+    self.gc_pending = false;
+    const live_bytes = self.tables.bytes() +
+        self.tuples.bytes() +
+        self.functions.bytes() +
+        self.strings.bytes();
 
-pub fn doIncrementalSweep(self: *VM) void {
-    const step_limit = 1024;
-    var processed: usize = 0;
-
-    while (processed < step_limit) {
-        switch (self.gc_sweep_state.phase) {
-            .idle => return,
-            .tables => {
-                const count = self.tables.sweepStep(
-                    self.gc_sweep_state.cursor,
-                    step_limit - processed,
-                );
-                if (count == 0 or
-                    self.gc_sweep_state.cursor >= self.tables.capacity())
-                {
-                    self.gc_sweep_state.phase = .tuples;
-                    self.gc_sweep_state.cursor = 0;
-                } else {
-                    self.gc_sweep_state.cursor += count;
-                    processed += count;
-                }
-            },
-            .tuples => {
-                const count = self.tuples.sweepStep(
-                    self.gc_sweep_state.cursor,
-                    step_limit - processed,
-                );
-                if (count == 0 or
-                    self.gc_sweep_state.cursor >= self.tuples.capacity())
-                {
-                    self.gc_sweep_state.phase = .functions;
-                    self.gc_sweep_state.cursor = 0;
-                } else {
-                    self.gc_sweep_state.cursor += count;
-                    processed += count;
-                }
-            },
-            .functions => {
-                const count = self.functions.sweepStep(
-                    self.gc_sweep_state.cursor,
-                    step_limit - processed,
-                );
-                if (count == 0 or
-                    self.gc_sweep_state.cursor >= self.functions.capacity())
-                {
-                    self.gc_sweep_state.phase = .upvalues;
-                    self.gc_sweep_state.cursor = 0;
-                } else {
-                    self.gc_sweep_state.cursor += count;
-                    processed += count;
-                }
-            },
-            .upvalues => {
-                const count = self.functions.sweepUpvalueStep(
-                    self.gc_sweep_state.cursor,
-                    step_limit - processed,
-                );
-                if (count == 0 or
-                    self.gc_sweep_state.cursor >= self.functions.upvalueCapacity())
-                {
-                    self.gc_sweep_state.phase = .structs;
-                    self.gc_sweep_state.cursor = 0;
-                } else {
-                    self.gc_sweep_state.cursor += count;
-                    processed += count;
-                }
-            },
-            .structs => {
-                const count = self.struct_instances.sweepStep(
-                    self.gc_sweep_state.cursor,
-                    step_limit - processed,
-                );
-                if (count == 0 or
-                    self.gc_sweep_state.cursor >= self.struct_instances.capacity())
-                {
-                    self.gc_sweep_state.phase = .strings;
-                    self.gc_sweep_state.cursor = 0;
-                } else {
-                    self.gc_sweep_state.cursor += count;
-                    processed += count;
-                }
-            },
-            .strings => {
-                const count = self.strings.sweepStep(
-                    self.gc_sweep_state.cursor,
-                    step_limit - processed,
-                );
-                if (count == 0 or
-                    self.gc_sweep_state.cursor >= self.strings.capacity())
-                {
-                    self.gc_sweep_state.phase = .done;
-                    return;
-                } else {
-                    self.gc_sweep_state.cursor += count;
-                    processed += count;
-                }
-            },
-            .done => return,
-        }
-    }
+    self.gc_threshold = @max(32 * 1024, live_bytes * self.gc_pause_factor);
 }
 
 pub fn processMarkStack(self: *VM) void {
