@@ -16,7 +16,7 @@ pub fn foldIr(self: *Compiler) !void {
 
 fn tryFoldInst(self: *Compiler, inst: *ir.IrInst) !bool {
     switch (inst.opcode) {
-        .add, .sub, .mul, .div, .mod, .add_int, .sub_int, .mul_int, .div_int, .mod_int, .div_float, .eq, .neq, .lt, .gt, .lte, .gte, .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => {
+        .add, .sub, .mul, .div, .mod, .add_int, .sub_int, .mul_int, .mod_int, .div_float, .eq, .neq, .lt, .gt, .lte, .gte, .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => {
             return tryFoldBinary(self, inst);
         },
         .negate, .not, .negate_int, .negate_float => {
@@ -74,7 +74,7 @@ fn tryFoldBinary(self: *Compiler, inst: *ir.IrInst) !bool {
             else => false,
         };
         const is_int = switch (inst.opcode) {
-            .add_int, .sub_int, .mul_int, .div_int, .mod_int, .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => true,
+            .add_int, .sub_int, .mul_int, .mod_int, .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int => true,
             else => false,
         };
 
@@ -82,7 +82,7 @@ fn tryFoldBinary(self: *Compiler, inst: *ir.IrInst) !bool {
             .add, .add_int => ln + rn,
             .sub, .sub_int => ln - rn,
             .mul, .mul_int => ln * rn,
-            .div, .div_int, .div_float => if (rn == 0.0) return false else ln / rn,
+            .div, .div_float => if (rn == 0.0) return false else ln / rn,
             .mod, .mod_int => if (rn == 0.0) return false else @mod(ln, rn),
             .eq, .eq_int => if (ln == rn) 1.0 else 0.0,
             .neq, .neq_int => if (ln != rn) 1.0 else 0.0,

@@ -393,22 +393,6 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             fiber.pc += 1;
             continue :dispatch instr.op;
         },
-        .div_int => {
-            const lhs = regRead(regs, base, instr.b);
-            const rhs = regRead(regs, base, instr.c);
-            if (debug_assert_types) {
-                std.debug.assert(lhs.isNumber());
-                std.debug.assert(rhs.isNumber());
-            }
-            const rv = @as(f64, @bitCast(rhs.bits));
-            if (rv == 0) return self.evalFailure(error.DivisionByZero);
-            regWrite(regs, base, instr.a, Data.new.num(@divTrunc(@as(i64, @intFromFloat(@as(f64, @bitCast(lhs.bits)))), @as(i64, @intFromFloat(rv)))));
-
-            if (fiber.pc >= fiber.program.len) break :dispatch;
-            instr = fiber.program[fiber.pc];
-            fiber.pc += 1;
-            continue :dispatch instr.op;
-        },
         .div_float => {
             const lhs = regRead(regs, base, instr.b);
             const rhs = regRead(regs, base, instr.c);

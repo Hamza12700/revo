@@ -29,7 +29,6 @@ pub const Opcode = enum(u8) {
     add_int, // "R[a] <- (int)R[b] + (int)R[c]"
     sub_int, // "R[a] <- (int)R[b] - (int)R[c]"
     mul_int, // "R[a] <- (int)R[b] * (int)R[c]"
-    div_int, // "R[a] <- (int)R[b] / (int)R[c]"
     mod_int, // "R[a] <- (int)R[b] % (int)R[c]"
     div_float, // "R[a] <- (float)R[b] / (float)R[c]"
     /// "R[a] <- R[b] == R[c]"

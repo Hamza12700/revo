@@ -325,7 +325,7 @@ pub const Compiler = struct {
         var result_reg: Register = 0;
 
         switch (op) {
-            .add, .sub, .mul, .div, .mod, .add_int, .sub_int, .mul_int, .div_int, .mod_int, .div_float, .eq, .neq, .lt, .gt, .lte, .gte, .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int, .@"and", .@"or" => {
+            .add, .sub, .mul, .div, .mod, .add_int, .sub_int, .mul_int, .mod_int, .div_float, .eq, .neq, .lt, .gt, .lte, .gte, .eq_int, .neq_int, .lt_int, .gt_int, .lte_int, .gte_int, .@"and", .@"or" => {
                 std.debug.assert(d >= 2);
                 result_reg = try toRegister(d - 2);
                 d -= 1;
@@ -428,7 +428,7 @@ pub const Compiler = struct {
                 try self.recordStackOp(op, op_arg + 1, 1, result_reg, op_arg);
             },
             .call_field => {
-                    const argc = op_arg & ~@as(Operand, 1 << 7);
+                const argc = op_arg & ~@as(Operand, 1 << 7);
                 const needed = argc + 2;
                 std.debug.assert(d >= needed);
                 const base = d - needed;
@@ -627,7 +627,6 @@ pub const Compiler = struct {
                         .add => if (any_float) .add else .add_int,
                         .sub => if (any_float) .sub else .sub_int,
                         .mul => if (any_float) .mul else .mul_int,
-                        // .div => if (any_float) .div_float else .div_int,
                         .div => .div_float,
                         .mod => .mod_int,
                         .eq => .eq_int,
