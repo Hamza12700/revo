@@ -10,6 +10,7 @@ const VM = vm.VM;
 const memory = vm.memory;
 const Data = memory.Data;
 const functions = vm.functions;
+const Tuple = vm.tuple.Tuple;
 const CRevoData = functions.CRevoData;
 const RevoBinding = functions.RevoBinding;
 const CFnPtr = functions.CFnPtr;
@@ -130,6 +131,7 @@ pub export fn revo_tuple_create(vm_ptr: *anyopaque, count: u64, items: [*]const 
     }
     const tid = v.tuples.create(data_list.items) catch
         return nil_val;
+    v.noteGCPressure(@sizeOf(Tuple) + @sizeOf(Data) * count);
     return .{ .tag = @intFromEnum(memory.Type.tuple), .value = @intCast(tid) };
 }
 

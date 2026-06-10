@@ -1125,6 +1125,8 @@ fn callNonClosureFunction(
     const fiber = self.currentFiber();
     switch (func) {
         .c_function => |f| {
+            self.host_call_depth += 1;
+            defer self.host_call_depth -= 1;
             const args_start = callee_slot + 1;
             const args_end = args_start + argc;
             try self.ensureAbsoluteSlot(args_end);
@@ -1138,7 +1140,7 @@ fn callNonClosureFunction(
             defer if (args.len > 16) self.runtime.alloc.free(c_args);
 
             for (args, 0..) |arg, i|
-                c_args[i] = root.functions.CRevoData.ofData(arg);
+                c_args[i] = root.functions.CRevoData.fromData(arg);
 
             var c_result: root.functions.CRevoData = .{
                 .tag = 0,

@@ -75,21 +75,6 @@ pub const CRevoData = extern struct {
         };
     }
 
-    pub fn ofData(data: Data) CRevoData {
-        const tag = data.tag();
-        return .{
-            .tag = @intFromEnum(tag),
-            .value = switch (tag) {
-                .number => @bitCast(data.asNum().?),
-                .string => data.asString().?,
-                .atom => data.asAtom().?,
-                .function => data.asFunction().?,
-                .table => data.asTable().?,
-                .tuple => data.asTuple().?,
-                .struct_val, .struct_type => unreachable,
-            },
-        };
-    }
 };
 
 pub const CFnPtr = *const fn (
