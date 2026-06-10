@@ -236,7 +236,7 @@ const SemanticChecker = struct {
             try param_names.append(self.alloc, p[0]);
             const resolved = types_mod.resolveTypeName(self, p[1]);
             try param_types.append(self.alloc, switch (resolved) {
-                .struct_type, .function, .atom => types_mod.TypeInfo.any,
+                .struct_type, .function => types_mod.TypeInfo.any,
                 else => resolved,
             });
         }
@@ -244,7 +244,7 @@ const SemanticChecker = struct {
         const types_slice = try param_types.toOwnedSlice(self.alloc);
         const resolved_ret = types_mod.resolveTypeName(self, spec.ret);
         const ret: types_mod.TypeInfo = switch (resolved_ret) {
-            .struct_type, .function, .atom => .any,
+            .struct_type, .function => .any,
             else => resolved_ret,
         };
         const sig_ptr = try self.alloc.create(FnSig);
@@ -378,8 +378,9 @@ const SemanticChecker = struct {
             .for_loop => |v| blk: {
                 _ = try self.analyzeNode(v.iter);
                 try self.pushScope();
+                const is_range = v.iter.expr == .range_literal;
                 for (v.params) |param| {
-                    try self.declare(param.name, .any);
+                    try self.declare(param.name, if (is_range) .int else .any);
                 }
                 const body_type = try self.analyzeNode(v.body);
                 self.popScope();
@@ -387,6 +388,7 @@ const SemanticChecker = struct {
             },
             .match_expr => |v| blk: {
                 _ = try self.analyzeNode(v.subject);
+                var unified: types_mod.TypeInfo = .any;
                 for (v.arms) |arm| {
                     try self.pushScope();
                     for (arm.matchers) |matcher| {
@@ -395,10 +397,11 @@ const SemanticChecker = struct {
                         }
                     }
                     if (arm.guard) |g| _ = try self.analyzeNode(g);
-                    _ = try self.analyzeNode(arm.then);
+                    const arm_type = try self.analyzeNode(arm.then);
                     self.popScope();
+                    unified = if (unified == .any) arm_type else if (arm_type == .any) unified else if (unified.eql(arm_type)) unified else .any;
                 }
-                break :blk types_mod.inferExprType(self, node);
+                break :blk unified;
             },
             .loop_expr => |v| blk: {
                 try self.pushScope();
@@ -479,6 +482,8 @@ const SemanticChecker = struct {
                 try seen.put(field.name, {});
                 const field_type: types_mod.TypeInfo = if (field.type_name) |tn|
                     try types_mod.evalTypeExpr(self, tn)
+                else if (field.default_value) |dflt|
+                    types_mod.inferExprType(self, dflt)
                 else
                     .any;
                 try fields.append(self.alloc, .{
@@ -741,7 +746,6 @@ const SemanticChecker = struct {
             // method calls (implicit_self) prepend the object as arg 0 at runtime
             const self_offset: usize = if (call.implicit_self) 1 else 0;
             const total_args = call.args.len + self_offset;
-            const count = if (total_args < sig.params.len) total_args else sig.params.len;
             if (total_args != sig.params.len) {
                 const stdlib_spec = revo.std_lib.api.find(name);
                 if (stdlib_spec == null or !stdlib_spec.?.variadic or total_args < sig.params.len) {
@@ -763,6 +767,85 @@ const SemanticChecker = struct {
                     );
                 }
             }
+            // handle named arguments
+            const has_named = for (call.args) |arg| {
+                if (isNamedParam(arg) != null) break true;
+            } else false;
+            var named_seen = false;
+            for (call.args, 0..) |arg, ai| {
+                if (isNamedParam(arg) != null) {
+                    named_seen = true;
+                } else if (named_seen) {
+                    try self.appendError(
+                        try std.fmt.allocPrint(self.alloc, "positional arg cannot follow named arg", .{}),
+                        arg.span,
+                        "here",
+                    );
+                }
+                _ = ai;
+            }
+            if (has_named) {
+                for (0..sig.params.len) |i| {
+                    if (call.implicit_self and i == 0) {
+                        const actual = types_mod.inferExprType(self, call.callee.expr.field.object);
+                        const expected = sig.params[i];
+                        if (!types_mod.canCoerce(actual, expected)) {
+                            try self.appendError(
+                                try std.fmt.allocPrint(self.alloc, "arg 1 to `{s}` wants {s}, got {s}", .{
+                                    name, types_mod.typeName(expected), types_mod.typeName(actual),
+                                }),
+                                call.callee.expr.field.object.span,
+                                try std.fmt.allocPrint(self.alloc, "not {s} (got {s})", .{
+                                    types_mod.typeName(expected), types_mod.typeName(actual),
+                                }),
+                            );
+                        }
+                        continue;
+                    }
+                    const pi = i - self_offset;
+                    const expected = sig.params[i];
+                    var found = false;
+                    for (call.args) |arg| {
+                        if (isNamedParam(arg)) |pn| {
+                            if (pi < sig.param_names.len and std.mem.eql(u8, sig.param_names[pi], pn)) {
+                                _ = try self.analyzeNode(arg.expr.assign_expr.value);
+                                const actual = types_mod.inferExprType(self, arg.expr.assign_expr.value);
+                                if (!types_mod.canCoerce(actual, expected)) {
+                                    try self.appendError(
+                                        try std.fmt.allocPrint(self.alloc, "arg `{s}` to `{s}` wants {s}, got {s}", .{
+                                            pn, name, types_mod.typeName(expected), types_mod.typeName(actual),
+                                        }),
+                                        arg.span,
+                                        try std.fmt.allocPrint(self.alloc, "not {s} (got {s})", .{
+                                            types_mod.typeName(expected), types_mod.typeName(actual),
+                                        }),
+                                    );
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!found and pi < call.args.len) {
+                        _ = try self.analyzeNode(call.args[pi]);
+                        const actual = types_mod.inferExprType(self, call.args[pi]);
+                        if (!types_mod.canCoerce(actual, expected)) {
+                            const param_name = if (pi < sig.param_names.len and sig.param_names[pi].len > 0) sig.param_names[pi] else "";
+                            try self.appendError(
+                                try std.fmt.allocPrint(self.alloc, "arg {d} (`{s}`) to `{s}` wants {s}, got {s}", .{
+                                    pi + 1, param_name, name, types_mod.typeName(expected), types_mod.typeName(actual),
+                                }),
+                                call.args[pi].span,
+                                try std.fmt.allocPrint(self.alloc, "not {s} (got {s})", .{
+                                    types_mod.typeName(expected), types_mod.typeName(actual),
+                                }),
+                            );
+                        }
+                    }
+                }
+                return sig.return_type;
+            }
+            const count = if (total_args < sig.params.len) total_args else sig.params.len;
             for (0..count) |i| {
                 const expected = sig.params[i];
                 const actual = if (call.implicit_self and i == 0)
@@ -794,6 +877,13 @@ const SemanticChecker = struct {
 
         for (call.args) |arg| _ = try self.analyzeNode(arg);
         return .any;
+    }
+
+    fn isNamedParam(arg: *const ast.Node) ?[]const u8 {
+        if (arg.expr != .assign_expr) return null;
+        const assign = arg.expr.assign_expr;
+        if (assign.target.expr != .ident) return null;
+        return assign.target.expr.ident;
     }
 
     fn findMethodByNameAndTarget(name: []const u8, target: revo.std_lib.TypeSpec) ?revo.std_lib.api.FnSpec {

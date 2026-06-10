@@ -226,7 +226,7 @@ pub const specs: []const api.FnSpec = &.{
             .{ "self", "table" },
             .{ "value", "any" },
         },
-        .ret = "number|nil",
+        .ret = "number|:nil",
         .doc = "ret 0-based index of value or nil if not found",
         .f = root.define(&.{ .table, .any }, index_of),
     },

@@ -74,7 +74,6 @@ pub const CRevoData = extern struct {
             },
         };
     }
-
 };
 
 pub const CFnPtr = *const fn (

@@ -186,7 +186,7 @@ pub const specs: []const api.FnSpec = &.{
             .{ "self", "string" },
             .{ "substr", "string" },
         },
-        .ret = "number|nil",
+        .ret = "number|:nil",
         .doc = "ret 0-based index of substring or nil",
         .f = root.define(&.{ .string, .string }, index_of),
     },
@@ -587,8 +587,7 @@ fn join(args: []const Data, vm: *VM) !NativeResult {
         else if (item.asNum()) |n| blk: {
             var fmt_buf: [64]u8 = undefined;
             break :blk std.fmt.bufPrint(&fmt_buf, "{}", .{n}) catch "?";
-        } else
-            "?";
+        } else "?";
         try buf.appendSlice(vm.runtime.alloc, item_str);
         if (i < tbl.array.items.len - 1 and tbl.array.items.len >= i) {
             try buf.appendSlice(vm.runtime.alloc, sep);

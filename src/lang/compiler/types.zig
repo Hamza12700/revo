@@ -235,6 +235,20 @@ pub fn inferIfType(then_type: TypeInfo, else_type: ?TypeInfo) TypeInfo {
     return .any;
 }
 
+pub fn inferMatchType(ctx: anytype, subject: *const ast.Node, arms: []const ast.MatchArm) TypeInfo {
+    _ = subject;
+    var result: TypeInfo = .any;
+    for (arms) |arm| {
+        const arm_type = inferExprType(ctx, arm.then);
+        if (result == .any) {
+            result = arm_type;
+        } else if (arm_type != .any) {
+            if (!result.eql(arm_type)) return .any;
+        }
+    }
+    return result;
+}
+
 pub fn inferOrelseType(left: TypeInfo, right: TypeInfo) TypeInfo {
     if (left == .any) return right;
     if (right == .any) return left;
@@ -263,6 +277,7 @@ const type_name_map: std.StaticStringMap(TypeInfo) = std.StaticStringMap(TypeInf
     .{ "string", .string },
     .{ "bool", .bool },
     .{ "any", .any },
+    .{ "nil", TypeInfo{ .atom = ":nil" } },
 });
 
 pub fn resolveTypeName(ctx: anytype, name: []const u8) TypeInfo {
@@ -312,7 +327,9 @@ pub fn inferExprType(ctx: anytype, node: *const ast.Node) TypeInfo {
         .try_expr => |inner| inferExprType(ctx, inner),
         .orelse_expr => |v| inferOrelseType(inferExprType(ctx, v.left), inferExprType(ctx, v.right)),
         .comp_block, .import_expr, .test_block, .test_suite, .macro_expr, .proc_macro => .any,
-        .range_literal, .match_expr, .assign_expr => .any,
+        .match_expr => |v| inferMatchType(ctx, v.subject, v.arms),
+        .range_literal => .int,
+        .assign_expr => .any,
         .decl, .binding => .any,
         .tuple_pattern => .any,
         .struct_def => |def| .{ .struct_type = def.name },

@@ -30,7 +30,7 @@ pub const root_specs: []const api.FnSpec = &.{
         .params = &.{
             .{ "value", "any" },
         },
-        .ret = "number|nil",
+        .ret = "number|:nil",
         .doc = "returns length of string or table",
         .f = define(&[_]TypeSpec{.any}, len_),
     },
@@ -59,7 +59,7 @@ pub const root_specs: []const api.FnSpec = &.{
         .placements = &.{api.g},
         .params = &.{
             .{ "value", "any" },
-            .{ "meta", "table|nil" },
+            .{ "meta", "table|:nil" },
         },
         .ret = "any",
         .doc = "sets metatable of value",
@@ -283,7 +283,7 @@ pub const root_specs: []const api.FnSpec = &.{
         .params = &.{
             .{ "path", "string" },
         },
-        .ret = "nil",
+        .ret = ":nil",
         .doc = "loads a C extension lib and registers its functions",
         .f = define(&[_]TypeSpec{.string}, cload),
     },
