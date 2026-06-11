@@ -152,7 +152,7 @@ loading_stack: std.ArrayList([]const u8),
 /// matches type enum order
 metatables: [
     @typeInfo(memory.Type).@"enum".fields.len
-]?mem.TableID = .{null} ** @typeInfo(memory.Type).@"enum".fields.len,
+]?mem.TableID = @splat(null),
 module_cache: ModuleCache,
 package_path: std.ArrayList([]const u8),
 debug_infos: std.ArrayList(DebugInfo),
