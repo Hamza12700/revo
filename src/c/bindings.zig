@@ -112,7 +112,9 @@ pub fn data(allocator: Allocator) !std.ArrayList(u8) {
         \\  ra_undef,
         \\  ra_none,
         \\  ra_no_result,
+        \\  ra_no,
         \\  ra_false,
+        \\  // false atoms are all which are above above
         \\  ra_true,
         \\  ra_range,
         \\  ra_ok,
