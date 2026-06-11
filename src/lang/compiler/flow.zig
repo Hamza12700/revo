@@ -608,11 +608,10 @@ pub fn compileIf(
     state.popScope(self);
 
     if (then_registers != self.active_registers) {
-        // then-branch may differ from that nil
+        // equalize, push nils if else was shorter, then clamp
         while (self.active_registers < then_registers)
             try self.pushNil();
-        while (self.active_registers > then_registers)
-            try self.regRelease();
+        self.active_registers = then_registers;
     }
     self.patchJump(end_jump);
 }
