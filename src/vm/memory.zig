@@ -23,7 +23,7 @@ pub const Type = enum(u4) {
     struct_type = 7,
 };
 
-const PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+pub const PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 pub const BOX_MASK: u64 = 0x7FF0_0000_0000_0000;
 const TAG_SHIFT: u6 = 48;
 const TAG_MASK: u64 = 0x000F;

@@ -286,8 +286,6 @@ fn next(self: *Lexer) !Token {
             self.makeToken(.minus_assign, start, self.pos, line, column)
         else if (self.matchChar('>'))
             self.makeToken(.arrow, start, self.pos, line, column)
-        else if (std.ascii.isDigit(self.peek()))
-            self.lexNumber(start, line, column)
         else
             self.makeToken(.minus, start, self.pos, line, column),
         '*' => if (self.matchChar('='))
@@ -442,12 +440,47 @@ fn lexHash(self: *Lexer, start: usize, line: u32, column: u32) !Token {
 }
 
 fn lexNumber(self: *Lexer, start: usize, line: u32, column: u32) Token {
-    while (std.ascii.isDigit(self.peek())) _ = self.advance();
-    if (self.peek() == '.' and self.peekN(1) != '.' and std.ascii.isDigit(self.peekN(1))) {
-        _ = self.advance();
-        while (std.ascii.isDigit(self.peek())) _ = self.advance();
+    var base: u8 = 10;
+
+    if (self.source[start] == '0') {
+        switch (self.peek()) {
+            'x', 'X' => {
+                base = 16;
+                _ = self.advance();
+            },
+            'b', 'B' => {
+                base = 2;
+                _ = self.advance();
+            },
+            'o', 'O' => {
+                base = 8;
+                _ = self.advance();
+            },
+            else => {},
+        }
     }
-    if (isIdentContinue(self.peek())) _ = self.advance();
+
+    while (true) {
+        const c = self.peek();
+        if (std.ascii.isDigit(c) or c == '_') {
+            _ = self.advance();
+        } else if (base == 16 and std.ascii.isHex(c)) {
+            _ = self.advance();
+        } else if (c == '.' and self.peekN(1) != '.') {
+            _ = self.advance();
+        } else if (c == 'e' or c == 'E') {
+            if (base != 10) break;
+            _ = self.advance();
+            if (self.peek() == '+' or self.peek() == '-') _ = self.advance();
+        } else if (c == 'p' or c == 'P') {
+            if (base != 16) break;
+            _ = self.advance();
+            if (self.peek() == '+' or self.peek() == '-') _ = self.advance();
+        } else {
+            break;
+        }
+    }
+
     return self.makeToken(.number, start, self.pos, line, column);
 }
 

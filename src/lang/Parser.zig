@@ -387,11 +387,26 @@ fn parsePrefix(self: *Parser) anyerror!*Node {
     const token = self.advance();
     return switch (token.type) {
         .number => blk: {
-            const value = std.fmt.parseFloat(f64, token.text) catch {
-                try self.recordError(.InvalidNumber, "invalid number literal", token.span());
-                break :blk self.allocExpr(token.span(), .{ .number = .{ .value = 0, .is_float = false } });
+            const parsed = std.zig.parseNumberLiteral(token.text);
+            const value: f64 = switch (parsed) {
+                .int => |n| @floatFromInt(n),
+                .float => std.fmt.parseFloat(f64, token.text) catch {
+                    try self.recordError(.InvalidNumber, "invalid float literal", token.span());
+                    break :blk self.allocExpr(token.span(), .{ .number = .{ .value = 0, .is_float = false } });
+                },
+                .big_int => {
+                    try self.recordError(.InvalidNumber, "number literal too large", token.span());
+                    break :blk self.allocExpr(token.span(), .{ .number = .{ .value = 0, .is_float = false } });
+                },
+                .failure => {
+                    try self.recordError(.InvalidNumber, "invalid number literal", token.span());
+                    break :blk self.allocExpr(token.span(), .{ .number = .{ .value = 0, .is_float = false } });
+                },
             };
-            break :blk self.allocExpr(token.span(), .{ .number = .{ .value = value, .is_float = std.mem.indexOfAny(u8, token.text, ".eE") != null } });
+            const is_float = (parsed == .float);
+            if (value > @import("revo").memory.PAYLOAD_MASK)
+                try self.recordError(.InvalidNumber, "number over 2^48 (281474976710655)", token.span());
+            break :blk self.allocExpr(token.span(), .{ .number = .{ .value = value, .is_float = is_float } });
         },
         .string => self.allocExpr(token.span(), .{ .string = token.text }),
         .multiline_string => self.allocExpr(token.span(), .{ .multiline_string = token.text }),
