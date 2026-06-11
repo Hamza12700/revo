@@ -523,8 +523,12 @@ pub inline fn regReadUnchecked(slots: []const Data, base: usize, reg: opcode.Reg
 }
 
 /// register write using a cached slots pointer (avoids currentFiber call)
-/// caller must ensure slot < slots.len
 pub inline fn regWrite(slots: []Data, base: usize, reg: opcode.Register, value: Data) void {
+    if (builtin.mode != .ReleaseFast) {
+        const slot = base + reg;
+        if (slot >= slots.len)
+            @panic("register write out of bounds; this is a compiler bug, report at https://codeberg.org/lung/revo/issues");
+    }
     slots[base + reg] = value;
 }
 

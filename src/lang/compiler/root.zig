@@ -1383,9 +1383,11 @@ pub const Compiler = struct {
         const body_addr: ProgramCounter = @intCast(self.irLen());
         const caller_registers = self.active_registers;
         const caller_max_registers = self.max_registers;
+        const caller_value_stack_len = self.value_stack.items.len;
         errdefer {
             self.active_registers = caller_registers;
             self.max_registers = caller_max_registers;
+            self.value_stack.shrinkRetainingCapacity(caller_value_stack_len);
         }
 
         const own_sig = !(ast.isDiscardName(name) or std.mem.eql(u8, name, "<fn>"));
@@ -1476,6 +1478,12 @@ pub const Compiler = struct {
         const fn_register_count = self.max_registers;
         self.active_registers = caller_registers;
         self.max_registers = caller_max_registers;
+        //
+        // remove any surplus items the body left on value_stack
+        // the body's .ret consumes 1, so leftovers are anything beyond pre-call len
+        // don't attempt to grow back items consumed by early returns
+        if (self.value_stack.items.len > caller_value_stack_len)
+            self.value_stack.shrinkRetainingCapacity(caller_value_stack_len);
 
         var finished = self.functions.pop() orelse unreachable;
         defer finished.deinit(self.alloc);
