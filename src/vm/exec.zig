@@ -199,8 +199,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 continue :dispatch instr.op;
             };
 
-            try self.setRuntimeMessageFmt("cannot add {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
-            return self.evalFailure(error.IncompatibleTypes);
+            return self.fail(error.IncompatibleTypes, "cannot add {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
         },
         .sub => {
             const lhs = regRead(regs, base, instr.b);
@@ -211,8 +210,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
-            try self.setRuntimeMessageFmt("cannot subtract {s} from {s}", .{ revo.std_lib.dataToString(rhs), revo.std_lib.dataToString(lhs) });
-            return self.evalFailure(error.IncompatibleTypes);
+            return self.fail(error.IncompatibleTypes, "cannot subtract {s} from {s}", .{ revo.std_lib.dataToString(rhs), revo.std_lib.dataToString(lhs) });
         },
         .mul => {
             const slots = regs;
@@ -248,8 +246,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
-            try self.setRuntimeMessageFmt("cannot multiply {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
-            return self.evalFailure(error.IncompatibleTypes);
+            return self.fail(error.IncompatibleTypes, "cannot multiply {s} and {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
         },
         .div => {
             const lhs = regRead(regs, base, instr.b);
@@ -261,8 +258,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
-            try self.setRuntimeMessageFmt("cannot divide {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
-            return self.evalFailure(error.IncompatibleTypes);
+            return self.fail(error.IncompatibleTypes, "cannot divide {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
         },
         .mod => {
             const lhs = regRead(regs, base, instr.b);
@@ -274,8 +270,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             };
-            try self.setRuntimeMessageFmt("cannot mod {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
-            return self.evalFailure(error.IncompatibleTypes);
+            return self.fail(error.IncompatibleTypes, "cannot mod {s} by {s}", .{ revo.std_lib.dataToString(lhs), revo.std_lib.dataToString(rhs) });
         },
         .mod_int => {
             const lhs = regRead(regs, base, instr.b);
@@ -300,8 +295,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 if (!fetchNext(fiber, &instr)) break :dispatch;
                 continue :dispatch instr.op;
             }
-            try self.setRuntimeMessageFmt("cannot negate {s}", .{revo.std_lib.dataToString(v)});
-            return self.evalFailure(error.IncompatibleTypes);
+            return self.fail(error.IncompatibleTypes, "cannot negate {s}", .{revo.std_lib.dataToString(v)});
         },
         .negate_int => {
             const v = regRead(regs, base, instr.b);
@@ -529,20 +523,14 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const idx_val = regRead(regs, base, instr.c);
             const idx_num = idx_val.asNum() orelse
                 return self.typeError("number for tuple index", idx_val);
-            if (idx_num < 0 or @floor(idx_num) != idx_num) {
-                try self.setRuntimeMessage("tuple index must be a non-negative integer");
-                return self.evalFailure(error.TypeError);
-            }
-            if (idx_num > @as(f64, @floatFromInt(std.math.maxInt(usize)))) {
-                try self.setRuntimeMessage("tuple index too large");
-                return self.evalFailure(error.TypeError);
-            }
+            if (idx_num < 0 or @floor(idx_num) != idx_num)
+                return self.fail(error.TypeError, "tuple index must be a non-negative integer", .{});
+            if (idx_num > @as(f64, @floatFromInt(std.math.maxInt(usize))))
+                return self.fail(error.TypeError, "tuple index too large", .{});
             const idx: usize = @intFromFloat(idx_num);
             const t = try self.tuples.get(tuple_id);
-            if (idx >= t.items.len) {
-                try self.setRuntimeMessageFmt("tuple index {d} out of range for tuple of length {d}", .{ idx, t.items.len });
-                return self.evalFailure(error.InvalidTuple);
-            }
+            if (idx >= t.items.len)
+                return self.fail(error.InvalidTuple, "tuple index {d} out of range for tuple of length {d}", .{ idx, t.items.len });
             regWrite(regs, base, instr.a, t.items[idx]);
 
             if (!fetchNext(fiber, &instr)) break :dispatch;
@@ -553,10 +541,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const tuple_id = tuple_val.asTuple() orelse
                 return self.typeError("tuple", tuple_val);
             const t = try self.tuples.get(tuple_id);
-            if (instr.bx >= t.items.len) {
-                try self.setRuntimeMessageFmt("tuple index {d} out of range for tuple of length {d}", .{ instr.bx, t.items.len });
-                return self.evalFailure(error.InvalidTuple);
-            }
+            if (instr.bx >= t.items.len)
+                return self.fail(error.InvalidTuple, "tuple index {d} out of range for tuple of length {d}", .{ instr.bx, t.items.len });
             regWrite(regs, base, instr.a, t.items[instr.bx]);
 
             if (!fetchNext(fiber, &instr)) break :dispatch;
@@ -564,10 +550,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
         },
         .struct_new => {
             const type_id: revo.StructTypeID = instr.bx;
-            const desc = self.struct_types.getType(type_id) orelse {
-                try self.setRuntimeMessage("invalid struct type");
-                return self.evalFailure(error.Panic);
-            };
+            const desc = self.struct_types.getType(type_id) orelse
+                return self.fail(error.Panic, "invalid struct type", .{});
             const instance_id = try self.struct_instances.create(type_id, desc.fields.len);
             const instance = self.structGetInstance(instance_id) catch return self.evalFailure(error.Panic);
             for (desc.fields, 0..) |f, i| {
@@ -586,10 +570,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             const name_atom = name_atom_data.asAtom() orelse
                 return self.typeError("atom for method name", name_atom_data);
             const method = regRead(regs, base, instr.c);
-            const desc = self.struct_types.getType(type_id) orelse {
-                try self.setRuntimeMessage("struct type not found");
-                return self.evalFailure(error.TypeError);
-            };
+            const desc = self.struct_types.getType(type_id) orelse
+                return self.fail(error.TypeError, "struct type not found", .{});
             try desc.methods.put(self.atomName(name_atom), method);
 
             if (!fetchNext(fiber, &instr)) break :dispatch;
@@ -640,30 +622,24 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             continue :dispatch instr.op;
         },
         .load_global => {
-            const value = self.globals.get(instr.bx) orelse {
-                try self.setRuntimeMessageFmt("undefined variable `{s}`", .{self.atomName(instr.bx)});
-                return self.evalFailure(error.UndefinedVariable);
-            };
+            const value = self.globals.get(instr.bx) orelse
+                return self.fail(error.UndefinedVariable, "undefined variable `{s}`", .{self.atomName(instr.bx)});
             regWrite(regs, base, instr.a, value);
 
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .load_stdlib_global => {
-            const value = self.stdlib_globals.get(instr.bx) orelse {
-                try self.setRuntimeMessageFmt("undefined stdlib variable `{s}`", .{self.atomName(instr.bx)});
-                return self.evalFailure(error.UndefinedVariable);
-            };
+            const value = self.stdlib_globals.get(instr.bx) orelse
+                return self.fail(error.UndefinedVariable, "undefined stdlib variable `{s}`", .{self.atomName(instr.bx)});
             regWrite(regs, base, instr.a, value);
 
             if (!fetchNext(fiber, &instr)) break :dispatch;
             continue :dispatch instr.op;
         },
         .store_global => {
-            if (self.const_globals.contains(instr.bx)) {
-                try self.setRuntimeMessage("reassignment to constant!");
-                return self.evalFailure(error.ConstantReassignment);
-            }
+            if (self.const_globals.contains(instr.bx))
+                return self.fail(error.ConstantReassignment, "reassignment to constant!", .{});
             const val = regRead(regs, base, instr.a);
             try self.globals.put(instr.bx, val);
 
@@ -671,10 +647,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
             continue :dispatch instr.op;
         },
         .store_global_const => {
-            if (self.const_globals.contains(instr.bx)) {
-                try self.setRuntimeMessage("reassignment to constant!");
-                return self.evalFailure(error.ConstantReassignment);
-            }
+            if (self.const_globals.contains(instr.bx))
+                return self.fail(error.ConstantReassignment, "reassignment to constant!", .{});
             const val = regRead(regs, base, instr.a);
             try self.globals.put(instr.bx, val);
             try self.const_globals.put(instr.bx, {});
@@ -724,10 +698,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                         const frame_base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
                         upv_buf[i] = try self.captureUpvalue(frame_base + spec.index);
                     } else {
-                        const closure2 = (try self.currentClosure()) orelse {
-                            try self.setRuntimeMessage("expected closure");
-                            return self.evalFailure(error.TypeError);
-                        };
+                        const closure2 = (try self.currentClosure()) orelse
+                            return self.fail(error.TypeError, "expected closure", .{});
                         upv_buf[i] = closure2.upvalues[spec.index];
                     }
                 }
@@ -740,10 +712,8 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                         const frame_base = fiber.frames_hot.items[fiber.frames_hot.items.len - 1].base;
                         try list.append(alloc, try self.captureUpvalue(frame_base + spec.index));
                     } else {
-                        const closure2 = (try self.currentClosure()) orelse {
-                            try self.setRuntimeMessage("expected closure");
-                            return self.evalFailure(error.TypeError);
-                        };
+                        const closure2 = (try self.currentClosure()) orelse
+                            return self.fail(error.TypeError, "expected closure", .{});
                         try list.append(alloc, closure2.upvalues[spec.index]);
                     }
                 }
@@ -788,8 +758,7 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
 
             const lookup_result = (try self.resolveField(object, key)) orelse {
                 const key_name = if (key.asAtom()) |atom| self.atomName(atom) else revo.std_lib.dataToString(key);
-                try self.setRuntimeMessageFmt("field `{s}` does not exist on {s}", .{ key_name, revo.std_lib.typeof(object) });
-                return self.evalFailure(error.NotAFunction);
+                return self.fail(error.NotAFunction, "field `{s}` does not exist on {s}", .{ key_name, revo.std_lib.typeof(object) });
             };
 
             if (colon) {
@@ -840,14 +809,10 @@ fn execFiberGeneric(self: *VM, comptime use_depth: bool, target_depth: usize) !?
                 return self.typeError("number in join", handle);
             const target_id = if (target_num >= 0 and @floor(target_num) == target_num)
                 @as(usize, @intFromFloat(target_num))
-            else {
-                try self.setRuntimeMessage("invalid fiber id in join");
-                return self.evalFailure(error.TypeError);
-            };
-            if (target_id >= self.sched.fibers.items.len) {
-                try self.setRuntimeMessage("fiber id out of range");
-                return self.evalFailure(error.TypeError);
-            }
+            else
+                return self.fail(error.TypeError, "invalid fiber id in join", .{});
+            if (target_id >= self.sched.fibers.items.len)
+                return self.fail(error.TypeError, "fiber id out of range", .{});
             const target = &self.sched.fibers.items[target_id];
             if (target.state == .dead) {
                 regWrite(regs, base, instr.a, target.result);

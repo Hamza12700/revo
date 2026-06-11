@@ -739,6 +739,13 @@ pub fn typeError(self: *VM, comptime expected: []const u8, got: mem.Data) EvalFa
     return self.evalFailure(error.TypeError);
 }
 
+pub fn fail(self: *VM, comptime err: EvalError, comptime fmt: []const u8, args: anytype) EvalFailure {
+    const msg = std.fmt.allocPrint(self.runtime.alloc, fmt, args) catch
+        return self.evalFailure(err);
+    self.setRuntimeMessageOwned(msg);
+    return self.evalFailure(err);
+}
+
 pub fn currentFrame(self: *VM) !*FrameHot {
     if (self.currentFiber().frames_hot.items.len == 0) return error.FrameUnderflow;
     return &self.currentFiber().frames_hot.items[self.currentFiber().frames_hot.items.len - 1];
