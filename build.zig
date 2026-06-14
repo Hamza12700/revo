@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const bindings = @import("src/c/bindings.zig");
 
 const Build = std.Build;
@@ -93,7 +94,21 @@ fn binName(b: *std.Build, triple: []const u8, btype: BinaryType) []const u8 {
 }
 
 pub fn build(b: *Build) !void {
-    const target = b.standardTargetOptions(.{});
+    var target: std.Build.ResolvedTarget = undefined;
+    // Defaults to 'musl' toolchain for linux system because otherwise the build fails with default settings,
+    // but not when enabled 'llvm' and 'lld'. -hamza (Jun 14 2026)
+    var with_glibc: bool = undefined;
+    if (builtin.os.tag == .linux) {
+        with_glibc = b.option(bool, "glibc", "Build with llvm and link with glibc") orelse false;
+        if (with_glibc) {
+            target = b.standardTargetOptions(.{.default_target = .{ .abi = .musl }});
+        } else {
+            target = b.standardTargetOptions(.{.default_target = .{ .abi = .gnu }});
+        }
+    } else {
+        target = b.standardTargetOptions(.{});
+    }
+
     const optimize = b.standardOptimizeOption(.{});
 
     const features_str = b.option([]const u8, "features", "available: isocline, lsp") orelse "isocline,lsp";
@@ -224,6 +239,10 @@ pub fn build(b: *Build) !void {
 
     if (optimize == .Debug) exe.lto = .none;
     exe.rdynamic = true; // Expose exports to dynamic libraries
+    if (builtin.os.tag == .linux and with_glibc) {
+        exe.use_llvm = true;
+        exe.use_lld = true;
+    }
 
     const exe_install = b.addInstallArtifact(exe, .{});
     const lib_install = b.addInstallArtifact(lib, .{});
@@ -350,4 +369,3 @@ pub fn build(b: *Build) !void {
         }
     }
 }
-
